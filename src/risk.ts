@@ -2,15 +2,11 @@ import type { RiskLimits } from "./env";
 
 export interface RiskContext {
   equityUsd: number;
-  openMarginUsd: number; // margem já usada pelas posições do grid
+  openMarginUsd: number;
   dayStartEquityUsd: number;
 }
 
-export type RiskDecision = { ok: true; sizeUsd: number; leverage: number } | { ok: false; reason: string };
-
-export function clampLeverage(leverage: number, limits: RiskLimits): number {
-  return Math.max(1, Math.min(leverage, limits.maxLeverage));
-}
+export type RiskDecision = { ok: true } | { ok: false; reason: string };
 
 export function dailyLossExceeded(ctx: RiskContext, limits: RiskLimits): boolean {
   if (!(ctx.dayStartEquityUsd > 0)) return false;
@@ -18,30 +14,26 @@ export function dailyLossExceeded(ctx: RiskContext, limits: RiskLimits): boolean
   return lossPct >= limits.maxDailyLossPct;
 }
 
-/** Valida uma nova ordem de compra. Reduções de posição (vendas/stop) nunca são bloqueadas. */
+/** Valida uma abertura. Fechamentos nunca são bloqueados. */
 export function checkOpen(
   market: string,
-  sizeUsd: number,
+  marginUsd: number,
   leverage: number,
   ctx: RiskContext,
   limits: RiskLimits,
 ): RiskDecision {
   if (!limits.allowedMarkets.includes(market.toUpperCase()))
     return { ok: false, reason: `mercado ${market} fora da whitelist (${limits.allowedMarkets.join(",")})` };
-  if (!(ctx.equityUsd > 0)) return { ok: false, reason: "patrimônio zero ou desconhecido" };
-  if (dailyLossExceeded(ctx, limits))
-    return { ok: false, reason: `perda diária >= ${limits.maxDailyLossPct}%` };
-
-  const lev = clampLeverage(leverage, limits);
-  const margin = sizeUsd / lev;
+  if (leverage > limits.maxLeverage) return { ok: false, reason: `alavancagem ${leverage}x > máx ${limits.maxLeverage}x` };
+  if (!(ctx.equityUsd > 0)) return { ok: false, reason: "patrimônio zero ou desconhecido (deposite USDC na conta do agente)" };
+  if (dailyLossExceeded(ctx, limits)) return { ok: false, reason: `perda diária >= ${limits.maxDailyLossPct}%` };
   const maxMargin = (ctx.equityUsd * limits.maxOrderPct) / 100;
-  if (margin > maxMargin)
+  if (marginUsd > maxMargin)
     return {
       ok: false,
-      reason: `margem da ordem $${margin.toFixed(2)} > ${limits.maxOrderPct}% do patrimônio ($${maxMargin.toFixed(2)})`,
+      reason: `margem $${marginUsd.toFixed(2)} > ${limits.maxOrderPct}% do patrimônio ($${maxMargin.toFixed(2)})`,
     };
-  const maxTotal = (ctx.equityUsd * limits.maxTotalExposurePct) / 100;
-  if (ctx.openMarginUsd + margin > maxTotal)
+  if (ctx.openMarginUsd + marginUsd > (ctx.equityUsd * limits.maxTotalExposurePct) / 100)
     return { ok: false, reason: `exposição total passaria de ${limits.maxTotalExposurePct}% do patrimônio` };
-  return { ok: true, sizeUsd, leverage: lev };
+  return { ok: true };
 }

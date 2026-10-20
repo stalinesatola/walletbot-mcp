@@ -3,6 +3,7 @@ export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_WEBHOOK_SECRET: string;
   OWNER_CHAT_ID: string;
+  ALERT_CHAT_ID?: string;
   WALT_MCP_URL: string;
   WALT_AUTH_ISSUER: string;
   MAX_LEVERAGE: string;

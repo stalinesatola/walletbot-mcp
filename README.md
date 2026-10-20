@@ -1,6 +1,6 @@
 # walletbot-mcp
 
-Bot de **auto trade Grid/DCA** para perpétuos no [Walt](https://walletbot.me) via **Walt MCP**
+Bot de **auto trade em grid** para perpétuos no [Walt](https://walletbot.me) via **Walt MCP**
 (`https://walletbot.me/bot-relay/public-api/mcp`), controlado pelo Telegram (`@walletbotmcpbot`)
 e hospedado 100% serverless em **Cloudflare Workers** (webhook do Telegram + Cron a cada 5 min + KV).
 
@@ -15,15 +15,21 @@ Cron */5 min ───────▶ Worker scheduled ──▶ preço → grid
 Walt OAuth ─────────▶ Worker /oauth/callback ──▶ tokens no KV (refresh automático)
 ```
 
-- **Estratégia** (`src/strategy/grid.ts`): grid long-only entre `low` e `high` com N níveis. Compra o nível
-  cuja faixa contém o preço (no máximo um por tick), vende cada nível no degrau de cima.
-  Abaixo de `low − STOP_LOSS_PCT%` fecha tudo e para.
-- **Risco** (`src/risk.ts`, perfil conservador em `wrangler.toml`): alavancagem ≤ 3x, margem ≤ 5% do
-  patrimônio por ordem, margem total ≤ 50%, perda diária ≥ 5% pausa o bot, whitelist BTC/ETH/SOL.
-- **Walt MCP** (`src/mcp.ts`, `src/oauth.ts`, `src/walt.ts`): OAuth 2.1 com PKCE e registro dinâmico
-  (escopos `perps.trade perps.readonly`). Os nomes das tools do Walt só aparecem após autenticar, então
-  o bot **propõe** um mapeamento (preço, conta, abrir, fechar) que você revisa e confirma com `/map confirm`.
-  O modo live não roda sem essa confirmação.
+- **Estratégia** (`src/strategy/grid.ts`): grid de **posição única**, porque o Walt aceita só uma posição
+  por contrato e não deixa aumentar uma posição aberta. A faixa `low`–`high` é dividida em N degraus.
+  Quando o preço entra num degrau, o bot abre um long com **take-profit no degrau de cima** e
+  **stop-loss em `low − STOP_LOSS_PCT%`**, ambos nativos do Walt (`autoClose`), então a saída acontece
+  mesmo com o bot parado. Quando a posição fecha por TP, o bot espera o próximo degrau; por SL, para o grid.
+- **Risco** (`src/risk.ts`, valores em `wrangler.toml`): alavancagem ≤ 3x (inteira e ≤ máx do contrato),
+  margem ≤ `MAX_ORDER_PCT` do saldo por trade (hoje **25%**, para operar com ~$10), perda diária ≥ 5% pausa
+  o bot, stop-loss 5% abaixo do `low`, whitelist BTC/ETH/SOL, tamanho mínimo do contrato validado no `/grid`.
+- **Alertas**: entradas, TP/SL, pausas, bloqueios de risco e erros vão para o canal `ALERT_CHAT_ID`
+  (`wrangler.toml`; o bot precisa ser admin do canal). Se o envio falhar, o alerta cai no chat do dono.
+- **Walt MCP** (`src/walt.ts`): segue o `perps_guide`. Toda escrita é `perps_prepare_*` → `perps_execute_operation`
+  com o `confirmationToken`; o `amount` é **margem em USDC**; o preço vem de `perps_latest_rate` com
+  `marketId` no formato `BTC-USD-PERP`; o saldo vem de `balance_get` (`accounts[].balance_available`, USDT); um execute que falha **nunca é repetido**
+  (o bot pausa e pede conferência, para evitar ordens duplicadas). OAuth 2.1 com PKCE e registro dinâmico;
+  o Walt só aceita redirect para `localhost`, então o endereço final é colado no bot.
 
 ## Instalação
 
@@ -33,35 +39,46 @@ Walt OAuth ─────────▶ Worker /oauth/callback ──▶ token
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_WEBHOOK_SECRET` (string aleatória, só `A-Z a-z 0-9 _ -`)
    - `OWNER_CHAT_ID` (seu chat id; se deixar vazio, o bot responde qualquer mensagem com o seu id)
-3. Push na `main` → o workflow roda testes e faz `wrangler deploy`. O KV `walletbot-mcp-STATE` já está
+   Os secrets podem estar no environment `TELEGRAM_BOT_TOKEN` (é o que o job `deploy` usa).
+3. Push na `main` (ou *Run workflow* manual) → o workflow roda testes e faz `wrangler deploy`.
+   A conta Cloudflare Free permite só 5 cron triggers; se o deploy falhar com `code: 10072`, libere um. O KV `walletbot-mcp-STATE` já está
    configurado em `wrangler.toml`.
 4. Registre o webhook abrindo uma vez:
    `https://walletbot-mcp.<sua-conta>.workers.dev/setup?secret=<TELEGRAM_WEBHOOK_SECRET>`
 5. No Telegram:
    ```
-   /connect            → abre o OAuth do Walt, confirme no Telegram
-   /tools              → lista as tools e o mapeamento proposto
-   /map …  /map confirm
-   /grid BTC 60000 70000 10 100 2
-   /run                → paper
+   /connect                       → autorize no Walt e confirme no Telegram
+   <cole o endereço localhost>    → conclui a conexão
+   /conta  e  /conta CONFIRMO     → cria a conta Perps do agente (uma vez)
+   /grid BTC 100000 110000 10 5 3 → BTC, faixa, 10 degraus, $5 de margem por trade, 3x
+   /run                           → modo paper (simulado, preço real do Walt)
    /status
-   /mode live CONFIRMO → só depois de validar em paper
+   depositar USDT/USDC na conta do agente no Walt → /mode live CONFIRMO → /run
    ```
+
+### Valor mínimo por trade
+
+O Walt exige `amount ≥ min_size_quote` ($1) **e** tamanho ≥ `min_size_base` do contrato. O tamanho é
+`nocional ÷ (preço × (1 + slippage))`, com `nocional = margem ÷ (1/alavancagem + taxa taker)`. Para BTC
+(`min_size_base` 0,00007, slippage 1%, taxa 0,09%) a ~$84 mil e 3x, a margem mínima é **≈ $2,00**; o `/grid`
+recusa valores abaixo disso. Com saldo de $9,99 e `MAX_ORDER_PCT` 25%, o teto por trade é $2,49 — por isso o
+grid atual usa `/grid BTC 77666.6 84276.5 8 2.2 3`.
 
 ### Comandos
 
 | Comando | O que faz |
 |---|---|
-| `/status` | modo, grid, posições, PnL |
-| `/connect`, `/disconnect` | OAuth do Walt |
-| `/tools [refresh]` | tools do Walt + mapeamento proposto |
-| `/map <role> <tool> [json]` | ajusta o mapeamento (`price`, `account`, `open`, `close`); placeholders `{market} {sizeUsd} {qty} {leverage} {price}` |
-| `/map confirm` | confirma o mapeamento (exigido para live) |
-| `/call <tool> [json]` | chama uma tool do Walt diretamente (debug) |
-| `/grid <mercado> <low> <high> <níveis> <capitalUSD> [alav]` | configura o grid |
-| `/run`, `/stop`, `/closeall` | inicia, para (mantém posições), fecha tudo |
-| `/mode paper` · `/mode live CONFIRMO` | troca o modo |
+| `/status` | modo, grid, posição, PnL |
+| `/connect`, `/code <url>`, `/disconnect` | OAuth do Walt |
+| `/conta [CONFIRMO]` | `perps_readiness`; cria a conta Perps do agente se faltar |
+| `/saldo` | `balance_get` |
+| `/tools` | lista as tools (schemas em `/tools.json?secret=…`) |
+| `/call <tool> [json]` | chama uma tool de leitura/preview diretamente (execute é bloqueado) |
+| `/grid <mercado> <low> <high> <degraus> <margemUSD> [alav]` | configura o grid (`/grid` sozinho sugere um comando a partir do preço atual) |
+| `/run`, `/stop`, `/closeall` | inicia, para (posição fica com TP/SL), fecha a posição e para |
+| `/mode paper` · `/mode live CONFIRMO` | troca o modo (live exige conta pronta e saldo) |
 | `/risk`, `/resume`, `/paper reset [saldo]` | travas, retomar após pausa, reiniciar simulação |
+| `/testalert` | testa o envio de alertas para o canal |
 
 ## Desenvolvimento local
 
@@ -73,3 +90,11 @@ npm test && npm run typecheck
 cp .dev.vars.example .dev.vars   # preencha
 npx wrangler dev                 # use um túnel (ex.: cloudflared) para testar o webhook
 ```
+
+## Licença
+
+[MIT](LICENSE) © 2026 Staline Satola. Uso por sua conta e risco: trading de perpétuos alavancados pode
+causar perda total do capital.
+
+> A memória do projeto para o Claude Code fica em `.secrets/CLAUDE.md`, que **não é versionado**
+> (`.gitignore`). Mantenha uma cópia local em `C:\GESTEM\walletbot-mcp\.secrets\CLAUDE.md`.

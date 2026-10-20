@@ -1,15 +1,15 @@
 import { riskLimits, type Env } from "./env";
-import { closeAll, connectWalt, currentPrice } from "./bot";
-import { McpClient, resultText } from "./mcp";
-import { disconnect, getAccessToken, startAuthorization } from "./oauth";
-import { PaperExecutor } from "./paper";
-import { gridExposure, loadMap, loadState, saveMap, saveState, saveToolNames, defaultState } from "./state";
-import { buildLevels, validateConfig, type GridConfig } from "./strategy/grid";
-import { COMMANDS } from "./telegram";
-import { ROLES, proposeMap, type Role } from "./walt";
+import { closeAll, connectWalt, currentPrice, paperEquity } from "./bot";
+import { callbackParams, disconnect, getAccessToken, handleCallback, startAuthorization } from "./oauth";
+import { cachedContracts, defaultState, loadState, saveState, saveTools } from "./state";
+import { notional, sizeError, step, stopLossPrice, validateConfig, type GridConfig } from "./strategy/grid";
+import { COMMANDS, notifyOwner } from "./telegram";
+import { findContract, previewReason, type Walt } from "./walt";
 
 /** Processa um comando do dono e devolve a resposta em texto. */
-export async function handleCommand(env: Env, text: string, origin: string): Promise<string> {
+export async function handleCommand(env: Env, text: string): Promise<string> {
+  // endereço do redirect colado sem /code
+  if (!text.trim().startsWith("/") && /[?&]code=/.test(text) && /[?&]state=/.test(text)) text = `/code ${text}`;
   const [rawCmd, ...args] = text.trim().split(/\s+/);
   const cmd = rawCmd.replace(/^\//, "").replace(/@.*$/, "").toLowerCase();
   switch (cmd) {
@@ -19,14 +19,27 @@ export async function handleCommand(env: Env, text: string, origin: string): Pro
     case "status":
       return status(env);
     case "connect":
-      return `Abra este link, autorize no Walt e confirme no Telegram:\n${await startAuthorization(env, origin)}`;
+      return [
+        "1) Abra o link, autorize no Walt e confirme no Telegram:",
+        await startAuthorization(env),
+        "",
+        "2) O navegador vai abrir uma página http://localhost:8787/… que não carrega — é esperado.",
+        "3) Copie o endereço completo dessa página e envie aqui (com ou sem /code).",
+        "Faça em poucos minutos: o código expira rápido.",
+      ].join("\n");
+    case "code":
+      if (!args.length) return "Uso: /code <endereço completo da página localhost após autorizar>";
+      await handleCallback(env, callbackParams(args.join(" ")));
+      return "✅ Walt conectado! Próximo passo: /conta para checar/criar a conta Perps do agente.";
     case "disconnect":
       await disconnect(env);
       return "Conta Walt desconectada.";
+    case "conta":
+      return conta(env, args[0] === "CONFIRMO");
+    case "saldo":
+      return `💰 ${JSON.stringify(await (await walt(env)).call("balance_get"), null, 1)}`;
     case "tools":
-      return tools(env, args[0] === "refresh");
-    case "map":
-      return map(env, args);
+      return tools(env);
     case "call":
       return call(env, args);
     case "grid":
@@ -37,7 +50,7 @@ export async function handleCommand(env: Env, text: string, origin: string): Pro
       const s = await loadState(env);
       s.running = false;
       await saveState(env, s);
-      return "Grid parado. Posições abertas foram mantidas (/closeall para fechar).";
+      return "Grid parado. A posição aberta (se houver) continua com TP/SL no Walt. /closeall para fechar.";
     }
     case "closeall":
       return closeAll(env);
@@ -45,6 +58,9 @@ export async function handleCommand(env: Env, text: string, origin: string): Pro
       return mode(env, args);
     case "risk":
       return risk(env);
+    case "testalert":
+      await notifyOwner(env, ["🔔 Teste de alerta do walletbot-mcp."]);
+      return env.ALERT_CHAT_ID ? `Alerta de teste enviado para ${env.ALERT_CHAT_ID}.` : "Alerta de teste enviado (sem ALERT_CHAT_ID: vai para você).";
     case "resume": {
       const s = await loadState(env);
       s.paused = undefined;
@@ -61,17 +77,22 @@ export async function handleCommand(env: Env, text: string, origin: string): Pro
 
 function help(): string {
   return [
-    "🤖 walletbot-mcp — auto trade Grid/DCA via Walt MCP",
+    "🤖 walletbot-mcp — grid automático no Walt Perps",
     "",
     ...COMMANDS.map(([c, d]) => `/${c} — ${d}`),
-    "/map <role> <tool> [json] — mapear tool (roles: price, account, open, close)",
-    "/map confirm — confirmar o mapeamento (obrigatório para live)",
     "/call <tool> [json] — chamar uma tool do Walt diretamente",
     "/paper reset [saldo] — reiniciar a carteira simulada",
     "/disconnect — remover tokens do Walt",
+    "/testalert — testar o envio de alertas para o canal",
     "",
-    "Fluxo: /connect → /tools → /map confirm → /grid … → /run (paper) → /mode live CONFIRMO",
+    "Fluxo: /connect → /conta → /grid … → /run (paper) → depositar USDC → /mode live CONFIRMO",
   ].join("\n");
+}
+
+async function walt(env: Env): Promise<Walt> {
+  const w = await connectWalt(env);
+  if (!w) throw new Error("Walt não conectado — use /connect");
+  return w;
 }
 
 async function status(env: Env): Promise<string> {
@@ -82,90 +103,60 @@ async function status(env: Env): Promise<string> {
     `Walt: ${connected ? "conectado ✅" : "não conectado (/connect)"}`,
   ];
   if (s.grid) {
-    const { cfg, levels } = s.grid;
-    const price = s.lastPrice;
-    const filled = levels.filter((l) => l.qty).length;
+    const { cfg, position: p } = s.grid;
     lines.push(
-      `Grid ${cfg.market}: $${cfg.low}–$${cfg.high}, ${cfg.levels} níveis, $${cfg.capitalUsd} (${cfg.leverage}x)`,
-      `Níveis cheios: ${filled}/${levels.length}`,
+      `Grid ${cfg.market} (#${cfg.contract.contractId}): $${cfg.low}–$${cfg.high}, ${cfg.levels} degraus de $${step(cfg).toFixed(cfg.contract.priceDecimals)}`,
+      `Por trade: margem $${cfg.marginUsd} ${cfg.leverage}x (~$${notional(cfg).toFixed(2)} nocional)`,
+      p
+        ? `Posição: long nível ${p.level + 1} entrada ~$${p.entryPrice} | TP $${p.takeProfit} | SL $${p.stopLoss}`
+        : "Posição: nenhuma (aguardando degrau)",
     );
-    if (price) {
-      const exp = gridExposure(levels, price, cfg.leverage);
-      lines.push(`Último preço: $${price} | PnL aberto $${exp.unrealized.toFixed(2)} | margem $${exp.margin.toFixed(2)}`);
-    }
   } else lines.push("Grid: não configurado (/grid)");
-  lines.push(`Compras ${s.stats.buys} | Vendas ${s.stats.sells} | PnL realizado $${s.stats.realizedPnl.toFixed(2)}`);
-  if (s.mode === "paper") {
-    const eq = s.lastPrice ? await new PaperExecutor(s).equity(s.lastPrice) : s.paper.cash;
-    lines.push(`Paper: patrimônio $${eq.toFixed(2)} (início $${s.paper.startCash})`);
-  }
+  if (s.lastPrice) lines.push(`Último preço: $${s.lastPrice}`);
+  lines.push(
+    `Trades ${s.stats.trades} (✅${s.stats.wins} ❌${s.stats.losses}) | PnL realizado ~$${s.stats.realizedPnl.toFixed(2)}`,
+  );
+  if (s.mode === "paper")
+    lines.push(`Paper: patrimônio $${(s.lastPrice ? paperEquity(s, s.lastPrice) : s.paper.cash).toFixed(2)} (início $${s.paper.startCash})`);
   if (s.lastTick) lines.push(`Último tick: ${s.lastTick}`);
   if (s.lastError) lines.push(`Último erro: ${s.lastError}`);
   return lines.join("\n");
 }
 
-async function client(env: Env): Promise<McpClient> {
-  const token = await getAccessToken(env);
-  if (!token) throw new Error("Walt não conectado — use /connect");
-  return new McpClient(env.WALT_MCP_URL, token);
+async function conta(env: Env, confirm: boolean): Promise<string> {
+  const w = await walt(env);
+  const r = await w.readiness();
+  if (r.ok) return "✅ Conta Perps do agente pronta (perps_readiness ok). Deposite USDC no Walt antes do modo live.";
+  const issues = r.issues.map((i) => `• ${i.code}: ${i.description ?? ""}`).join("\n");
+  if (!r.issues.some((i) => i.code === "agent.account.not_found")) return `⚠️ Pendências:\n${issues}`;
+  if (!confirm) {
+    const p = await w.preview("perps_prepare_account_create", {});
+    return [
+      `A conta Perps deste agente ainda não existe:\n${issues}`,
+      "",
+      p.ok ? "Preview ok. Para criar, envie: /conta CONFIRMO" : `Preview recusado: ${previewReason(p)}`,
+    ].join("\n");
+  }
+  await w.createAccount();
+  return "Criação solicitada ✅ (é assíncrona). Rode /conta de novo em alguns segundos para confirmar.";
 }
 
-async function tools(env: Env, refresh: boolean): Promise<string> {
-  const list = await (await client(env)).listTools();
-  await saveToolNames(env, list.map((t) => t.name));
-  let current = await loadMap(env);
-  if (refresh || Object.keys(current.bindings).length === 0) {
-    current = proposeMap(list);
-    await saveMap(env, current);
-  }
-  const lines = [`Tools do Walt (${list.length}):`];
-  for (const t of list) {
-    const params = Object.keys(t.inputSchema?.properties ?? {}).join(", ");
-    lines.push(`• ${t.name}(${params})${t.description ? ` — ${t.description.slice(0, 120)}` : ""}`);
-  }
-  lines.push("", mapText(current));
-  return lines.join("\n");
-}
-
-function mapText(m: Awaited<ReturnType<typeof loadMap>>): string {
-  const lines = [`Mapeamento ${m.confirmed ? "✅ confirmado" : "⚠️ NÃO confirmado"}:`];
-  for (const role of ROLES) {
-    const b = m.bindings[role];
-    lines.push(`${role}: ${b ? `${b.tool} ${JSON.stringify(b.args)}` : "—"}`);
-  }
-  if (!m.confirmed) lines.push("Revise e ajuste com /map <role> <tool> <json>, depois /map confirm.");
-  return lines.join("\n");
-}
-
-async function map(env: Env, args: string[]): Promise<string> {
-  const m = await loadMap(env);
-  if (args.length === 0) return mapText(m);
-  if (args[0] === "confirm") {
-    m.confirmed = true;
-    await saveMap(env, m);
-    return mapText(m);
-  }
-  const role = args[0] as Role;
-  if (!ROLES.includes(role)) return `Role inválida. Use: ${ROLES.join(", ")}`;
-  const tool = args[1];
-  if (!tool) return "Uso: /map <role> <tool> [json com {market} {sizeUsd} {qty} {leverage} {price}]";
-  let templ: Record<string, unknown> = m.bindings[role]?.tool === tool ? m.bindings[role]!.args : {};
-  if (args.length > 2) {
-    try {
-      templ = JSON.parse(args.slice(2).join(" "));
-    } catch {
-      return "JSON inválido.";
-    }
-  }
-  m.bindings[role] = { tool, args: templ };
-  m.confirmed = false; // qualquer mudança exige nova confirmação
-  await saveMap(env, m);
-  return mapText(m);
+async function tools(env: Env): Promise<string> {
+  const w = await walt(env);
+  const list = await w.listTools();
+  await saveTools(env, list);
+  return [
+    `Tools do Walt (${list.length}):`,
+    ...list.map((t) => `• ${t.name}(${Object.keys(t.inputSchema?.properties ?? {}).join(", ")})`),
+    "",
+    "Schemas completos: /tools.json?secret=<TELEGRAM_WEBHOOK_SECRET>",
+  ].join("\n");
 }
 
 async function call(env: Env, args: string[]): Promise<string> {
   const tool = args[0];
   if (!tool) return "Uso: /call <tool> [json]";
+  if (tool === "perps_execute_operation") return "Use os comandos do bot para executar operações (evita execuções duplicadas).";
   let params: Record<string, unknown> = {};
   if (args.length > 1) {
     try {
@@ -174,33 +165,55 @@ async function call(env: Env, args: string[]): Promise<string> {
       return "JSON inválido.";
     }
   }
-  const result = await (await client(env)).callTool(tool, params);
-  return `${result.isError ? "❌" : "✅"} ${tool}\n${resultText(result)}`;
+  const data = await (await walt(env)).call(tool, params);
+  return `✅ ${tool}\n${typeof data === "string" ? data : JSON.stringify(data, null, 1)}`;
 }
 
 async function grid(env: Env, args: string[]): Promise<string> {
-  if (args.length < 5) return "Uso: /grid <mercado> <low> <high> <níveis> <capitalUSD> [alavancagem]\nEx.: /grid BTC 60000 70000 10 100 2";
   const limits = riskLimits(env);
+  const market = (args[0] ?? limits.allowedMarkets[0]).toUpperCase();
+  if (!limits.allowedMarkets.includes(market)) return `Mercado fora da whitelist: ${limits.allowedMarkets.join(", ")}`;
+  const w = await walt(env);
+  const contract = findContract(await cachedContracts(env, () => w.contracts()), market);
+  if (!contract) return `Contrato ${market}-USDC não encontrado no Walt.`;
+  if (args.length < 5) {
+    // sugestão pronta para copiar: faixa de −6% a +2% do preço atual
+    const price = await w.rate(contract);
+    const d = contract.priceDecimals;
+    const lo = (price * 0.94).toFixed(d);
+    const hi = (price * 1.02).toFixed(d);
+    return [
+      `Preço atual de ${market}: $${price}`,
+      "",
+      "Uso: /grid <mercado> <low> <high> <degraus> <margemUSD por trade> [alavancagem]",
+      "Sugestão (faixa −6% a +2%, 8 degraus, $5 de margem, 3x) — copie e envie:",
+      `/grid ${market} ${lo} ${hi} 8 5 3`,
+    ].join("\n");
+  }
   const cfg: GridConfig = {
-    market: args[0].toUpperCase(),
+    market,
+    contract,
     low: Number(args[1]),
     high: Number(args[2]),
     levels: Number(args[3]),
-    capitalUsd: Number(args[4]),
-    leverage: Math.min(Number(args[5] ?? 1), limits.maxLeverage),
+    marginUsd: Number(args[4]),
+    leverage: Math.min(Math.trunc(Number(args[5] ?? 1)), limits.maxLeverage),
   };
   const err = validateConfig(cfg);
   if (err) return `Config inválida: ${err}`;
-  if (!limits.allowedMarkets.includes(cfg.market)) return `Mercado fora da whitelist: ${limits.allowedMarkets.join(", ")}`;
   const s = await loadState(env);
-  if (s.grid?.levels.some((l) => l.qty)) return "Há posições abertas no grid atual. Use /closeall antes de reconfigurar.";
-  s.grid = { cfg, levels: buildLevels(cfg) };
+  if (s.grid?.position) return "Há uma posição aberta no grid atual. Use /closeall antes de reconfigurar.";
+  const price = await w.rate(contract);
+  const sizeErr = sizeError(cfg, Math.min(price, cfg.high));
+  if (sizeErr) return `Config inválida: ${sizeErr}`;
+  s.grid = { cfg };
   s.running = false;
   await saveState(env, s);
-  const per = cfg.capitalUsd / cfg.levels;
   return [
-    `Grid ${cfg.market} configurado: ${cfg.levels} níveis de $${per.toFixed(2)} entre $${cfg.low} e $${cfg.high}, ${cfg.leverage}x.`,
-    `Stop-loss: abaixo de $${(cfg.low * (1 - limits.stopLossPct / 100)).toFixed(2)}.`,
+    `Grid ${market} (contrato #${contract.contractId}) configurado:`,
+    `• ${cfg.levels} degraus de $${step(cfg).toFixed(contract.priceDecimals)} entre $${cfg.low} e $${cfg.high} (preço atual $${price})`,
+    `• Cada entrada: margem $${cfg.marginUsd} ${cfg.leverage}x ≈ $${notional(cfg).toFixed(2)} nocional, TP no degrau de cima`,
+    `• Stop-loss: $${stopLossPrice(cfg, limits.stopLossPct).toFixed(contract.priceDecimals)} (para o grid)`,
     `Use /run para iniciar (modo ${s.mode}).`,
   ].join("\n");
 }
@@ -208,11 +221,10 @@ async function grid(env: Env, args: string[]): Promise<string> {
 async function run(env: Env): Promise<string> {
   const s = await loadState(env);
   if (!s.grid) return "Configure antes com /grid.";
-  const price = await currentPrice(env, s.grid.cfg.market, await connectWalt(env));
+  const price = await currentPrice(s.grid.cfg, await connectWalt(env));
+  const { low, high } = s.grid.cfg;
   const warn =
-    price > s.grid.cfg.high || price < s.grid.cfg.low
-      ? `\n⚠️ Preço fora da faixa $${s.grid.cfg.low}–$${s.grid.cfg.high}: o grid só compra quando o preço entrar nela.`
-      : "";
+    price > high || price < low ? `\n⚠️ Preço fora da faixa $${low}–$${high}: só entra quando o preço chegar nela.` : "";
   s.running = true;
   s.paused = undefined;
   s.lastPrice = price;
@@ -224,12 +236,14 @@ async function mode(env: Env, args: string[]): Promise<string> {
   const s = await loadState(env);
   const target = args[0]?.toLowerCase();
   if (target !== "paper" && target !== "live") return `Modo atual: ${s.mode}. Uso: /mode paper | /mode live CONFIRMO`;
-  if (s.grid?.levels.some((l) => l.qty)) return "Feche as posições (/closeall) antes de trocar de modo.";
+  if (s.grid?.position) return "Feche a posição (/closeall) antes de trocar de modo.";
   if (target === "live") {
     if (args[1] !== "CONFIRMO") return "⚠️ Live usa dinheiro real em perpétuos alavancados. Envie: /mode live CONFIRMO";
-    const m = await loadMap(env);
-    if (!m.confirmed) return "Confirme o mapeamento antes (/tools, depois /map confirm).";
-    if (!(await getAccessToken(env))) return "Conecte o Walt antes (/connect).";
+    const w = await walt(env);
+    const r = await w.readiness();
+    if (!r.ok) return `Conta Perps não está pronta: ${r.issues.map((i) => i.code).join(", ")} — use /conta.`;
+    const bal = await w.balanceUsd();
+    if (!(bal > 0)) return "Saldo USDC zero na conta do agente — deposite no Walt antes.";
   }
   s.mode = target;
   s.running = false;
@@ -243,10 +257,9 @@ function risk(env: Env): string {
   return [
     "Travas de risco:",
     `• Alavancagem máx: ${l.maxLeverage}x`,
-    `• Margem máx por ordem: ${l.maxOrderPct}% do patrimônio`,
-    `• Margem total máx: ${l.maxTotalExposurePct}% do patrimônio`,
+    `• Margem máx por trade: ${l.maxOrderPct}% do patrimônio`,
     `• Perda diária máx: ${l.maxDailyLossPct}% (pausa o bot)`,
-    `• Stop-loss: ${l.stopLossPct}% abaixo do low do grid`,
+    `• Stop-loss: ${l.stopLossPct}% abaixo do low do grid (no Walt, via autoClose)`,
     `• Mercados: ${l.allowedMarkets.join(", ")}`,
   ].join("\n");
 }
@@ -259,7 +272,7 @@ async function paperCmd(env: Env, args: string[]): Promise<string> {
   if (!(cash > 0)) return "Saldo inválido.";
   const fresh = defaultState();
   fresh.paper = { cash, startCash: cash };
-  if (s.grid) fresh.grid = { cfg: s.grid.cfg, levels: buildLevels(s.grid.cfg) };
+  if (s.grid) fresh.grid = { cfg: s.grid.cfg };
   await saveState(env, fresh);
   return `Carteira paper reiniciada com $${cash}.`;
 }

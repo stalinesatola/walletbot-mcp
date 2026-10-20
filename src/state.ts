@@ -1,15 +1,14 @@
 import type { Env } from "./env";
-import type { GridConfig, GridLevel } from "./strategy/grid";
-import type { ToolMap } from "./walt";
+import type { ContractInfo, GridConfig, GridPosition } from "./strategy/grid";
 
 export interface BotState {
   mode: "paper" | "live";
   running: boolean;
-  paused?: string; // motivo da pausa automática (perda diária, erro)
-  grid?: { cfg: GridConfig; levels: GridLevel[] };
+  paused?: string; // motivo da pausa automática (perda diária, erro de execução)
+  grid?: { cfg: GridConfig; position?: GridPosition };
   day?: { date: string; startEquity: number };
   paper: { cash: number; startCash: number };
-  stats: { buys: number; sells: number; realizedPnl: number };
+  stats: { trades: number; wins: number; losses: number; realizedPnl: number };
   lastPrice?: number;
   lastTick?: string;
   lastError?: string;
@@ -17,39 +16,47 @@ export interface BotState {
 }
 
 const K_STATE = "bot:state";
-const K_MAP = "walt:map";
 const K_TOOLS = "walt:tools";
+const K_CONTRACTS = "walt:contracts";
 const K_LOCK = "bot:lock";
-
-export const PAPER_FEE = 0.0005; // 0,05% por lado, simulado
 
 export function defaultState(): BotState {
   return {
     mode: "paper",
     running: false,
     paper: { cash: 1000, startCash: 1000 },
-    stats: { buys: 0, sells: 0, realizedPnl: 0 },
+    stats: { trades: 0, wins: 0, losses: 0, realizedPnl: 0 },
   };
 }
 
 export async function loadState(env: Env): Promise<BotState> {
-  return { ...defaultState(), ...((await env.STATE.get<BotState>(K_STATE, "json")) ?? {}) };
+  const saved = (await env.STATE.get<BotState>(K_STATE, "json")) ?? {};
+  const s = { ...defaultState(), ...saved };
+  s.stats = { ...defaultState().stats, ...s.stats };
+  // estado da versão anterior (grid multi-nível) não é compatível
+  if (s.grid && !(s.grid.cfg as Partial<GridConfig>).contract) s.grid = undefined;
+  return s;
 }
 
 export async function saveState(env: Env, s: BotState): Promise<void> {
   await env.STATE.put(K_STATE, JSON.stringify(s));
 }
 
-export async function loadMap(env: Env): Promise<ToolMap> {
-  return (await env.STATE.get<ToolMap>(K_MAP, "json")) ?? { bindings: {}, confirmed: false };
+/** Guarda o tools/list completo (descrições + schemas) para inspeção em /tools.json. */
+export async function saveTools(env: Env, tools: unknown[]): Promise<void> {
+  await env.STATE.put(K_TOOLS, JSON.stringify(tools));
 }
 
-export async function saveMap(env: Env, m: ToolMap): Promise<void> {
-  await env.STATE.put(K_MAP, JSON.stringify(m));
+export async function loadTools(env: Env): Promise<unknown[] | null> {
+  return env.STATE.get<unknown[]>(K_TOOLS, "json");
 }
 
-export async function saveToolNames(env: Env, names: string[]): Promise<void> {
-  await env.STATE.put(K_TOOLS, JSON.stringify(names));
+export async function cachedContracts(env: Env, fetcher: () => Promise<ContractInfo[]>): Promise<ContractInfo[]> {
+  const hit = await env.STATE.get<ContractInfo[]>(K_CONTRACTS, "json");
+  if (hit?.length) return hit;
+  const fresh = await fetcher();
+  await env.STATE.put(K_CONTRACTS, JSON.stringify(fresh), { expirationTtl: 3600 });
+  return fresh;
 }
 
 /** Lock best-effort (KV é eventualmente consistente; o cron de 5 min dá folga). */
@@ -61,18 +68,4 @@ export async function acquireLock(env: Env): Promise<boolean> {
 
 export async function releaseLock(env: Env): Promise<void> {
   await env.STATE.delete(K_LOCK);
-}
-
-/** Métricas das posições do grid ao preço atual. */
-export function gridExposure(levels: GridLevel[], price: number, leverage: number) {
-  let unrealized = 0;
-  let margin = 0;
-  let qty = 0;
-  for (const l of levels) {
-    if (!l.qty || !l.entryPrice) continue;
-    unrealized += l.qty * (price - l.entryPrice);
-    margin += (l.qty * l.entryPrice) / leverage;
-    qty += l.qty;
-  }
-  return { unrealized, margin, qty };
 }

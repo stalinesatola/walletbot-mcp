@@ -20,20 +20,35 @@ export async function send(env: Env, chatId: string | number, text: string): Pro
   }
 }
 
+/** Alertas automáticos: vão para ALERT_CHAT_ID (canal) se configurado; se o envio falhar, caem no dono. */
 export async function notifyOwner(env: Env, msgs: string[]): Promise<void> {
-  if (!env.OWNER_CHAT_ID || msgs.length === 0) return;
-  await send(env, env.OWNER_CHAT_ID, msgs.join("\n"));
+  if (msgs.length === 0) return;
+  const text = msgs.join("\n");
+  if (env.ALERT_CHAT_ID) {
+    const res = (await tg(env, "sendMessage", { chat_id: env.ALERT_CHAT_ID, text, disable_web_page_preview: true })) as {
+      ok?: boolean;
+      description?: string;
+    };
+    if (res.ok) return;
+    if (env.OWNER_CHAT_ID)
+      await send(env, env.OWNER_CHAT_ID, `⚠️ Não consegui postar no canal ${env.ALERT_CHAT_ID} (${res.description ?? "erro"}). Alerta:\n${text}`);
+    return;
+  }
+  if (env.OWNER_CHAT_ID) await send(env, env.OWNER_CHAT_ID, text);
 }
 
 export const COMMANDS: Array<[string, string]> = [
   ["help", "Ajuda"],
   ["status", "Estado do bot, grid e PnL"],
   ["connect", "Conectar a conta Walt (OAuth)"],
-  ["tools", "Listar tools do Walt e o mapeamento"],
-  ["grid", "Configurar grid: /grid BTC 60000 70000 10 100 [alav]"],
+  ["code", "Concluir o /connect: /code <endereço localhost>"],
+  ["conta", "Checar/criar a conta Perps do agente"],
+  ["saldo", "Saldo USDC no Walt"],
+  ["tools", "Listar tools do Walt"],
+  ["grid", "Configurar: /grid BTC 100000 110000 10 5 3"],
   ["run", "Iniciar o grid"],
-  ["stop", "Parar o grid (mantém posições)"],
-  ["closeall", "Fechar posições do grid e parar"],
+  ["stop", "Parar o grid (posição fica com TP/SL)"],
+  ["closeall", "Fechar a posição do grid e parar"],
   ["mode", "paper | live CONFIRMO"],
   ["risk", "Ver travas de risco"],
   ["resume", "Retomar após pausa automática"],

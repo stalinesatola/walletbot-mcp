@@ -2,7 +2,7 @@ import { tick } from "./bot";
 import { handleCommand } from "./commands";
 import type { Env } from "./env";
 import { handleCallback } from "./oauth";
-import { acquireLock, releaseLock } from "./state";
+import { acquireLock, loadTools, releaseLock } from "./state";
 import { COMMANDS, notifyOwner, send, tg, timingSafeEqual, type TgUpdate } from "./telegram";
 
 export default {
@@ -15,7 +15,7 @@ export default {
         return new Response("forbidden", { status: 403 });
       const update = (await req.json()) as TgUpdate;
       // responde 200 na hora para o Telegram não reenviar; processa em segundo plano
-      ctx.waitUntil(onMessage(env, update, url.origin));
+      ctx.waitUntil(onMessage(env, update));
       return new Response("ok");
     }
 
@@ -47,6 +47,16 @@ export default {
       return Response.json({ webhook, commands });
     }
 
+    // tools/list completo salvo pelo último /tools (protegido pelo mesmo segredo do webhook)
+    if (req.method === "GET" && url.pathname === "/tools.json") {
+      const secret = url.searchParams.get("secret") ?? "";
+      if (!env.TELEGRAM_WEBHOOK_SECRET || !timingSafeEqual(secret, env.TELEGRAM_WEBHOOK_SECRET))
+        return new Response("forbidden", { status: 403 });
+      return new Response(JSON.stringify((await loadTools(env)) ?? [], null, 2), {
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
+
     return new Response("walletbot-mcp ok");
   },
 
@@ -64,7 +74,7 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function onMessage(env: Env, update: TgUpdate, origin: string): Promise<void> {
+async function onMessage(env: Env, update: TgUpdate): Promise<void> {
   const msg = update.message;
   if (!msg?.text) return;
   const chatId = String(msg.chat.id);
@@ -75,7 +85,7 @@ async function onMessage(env: Env, update: TgUpdate, origin: string): Promise<vo
   if (chatId !== env.OWNER_CHAT_ID) return; // só o dono controla o bot
   let reply: string;
   try {
-    reply = await handleCommand(env, msg.text, origin);
+    reply = await handleCommand(env, msg.text);
   } catch (e) {
     reply = `❌ ${(e as Error).message}`;
   }
