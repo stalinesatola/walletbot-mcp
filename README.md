@@ -61,7 +61,8 @@ banco do tgcloud e apaga a mensagem. Só esse user id abre os endpoints da Mini 
 1. No environment `TELEGRAM_BOT_TOKEN` do GitHub, crie `API_SECRET` (aleatório, longo) e `TGCLOUD_TOKEN`
    (BotFather → Serverless → CLI Access).
 2. Rode o workflow (push na `main` ou *Run workflow*): o job `deploy` publica o Worker com o `API_SECRET` e o
-   `deploy-miniapp` faz `tgcloud push` + `migrate` e imprime a URL `https://app<id>.tgcloud.ai/`.
+   `deploy-miniapp` faz `tgcloud push` + `migrate --safe` e imprime a URL `https://app<id>.tgcloud.ai/`
+   (a deste bot é `https://app8936339348.tgcloud.ai/`).
 3. Coloque essa URL em `MINIAPP_URL` no `wrangler.toml` (novo deploy) e abra
    `/setup?secret=<TELEGRAM_WEBHOOK_SECRET>`: cria o botão de menu **Painel** sem mexer no webhook.
 4. No chat do bot: `/link <API_SECRET>`.

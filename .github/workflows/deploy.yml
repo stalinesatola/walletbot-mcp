@@ -68,4 +68,4 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npx tgcloud push
-          npx tgcloud migrate --safe --yes
+          npx tgcloud migrate --safe
