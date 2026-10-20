@@ -10,6 +10,8 @@ import { ROLES, proposeMap, type Role } from "./walt";
 
 /** Processa um comando do dono e devolve a resposta em texto. */
 export async function handleCommand(env: Env, text: string): Promise<string> {
+  // endereço do redirect colado sem /code
+  if (!text.trim().startsWith("/") && /[?&]code=/.test(text) && /[?&]state=/.test(text)) text = `/code ${text}`;
   const [rawCmd, ...args] = text.trim().split(/\s+/);
   const cmd = rawCmd.replace(/^\//, "").replace(/@.*$/, "").toLowerCase();
   switch (cmd) {
