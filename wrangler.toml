@@ -1,0 +1,26 @@
+name = "walletbot-mcp"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+
+# Estado do bot (tokens OAuth, grid, modo paper) — namespace "walletbot-mcp-STATE".
+[[kv_namespaces]]
+binding = "STATE"
+id = "9841b2e9ce794b0f98b262ced2327b56"
+
+# Tick do grid a cada 5 minutos.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+WALT_MCP_URL = "https://walletbot.me/bot-relay/public-api/mcp"
+WALT_AUTH_ISSUER = "https://walletbot.me/bot-relay/public-api"
+# Travas de risco (perfil conservador).
+MAX_LEVERAGE = "3"
+MAX_ORDER_PCT = "5"            # margem máxima por ordem, % do patrimônio
+MAX_TOTAL_EXPOSURE_PCT = "50"  # margem total máxima em posições do grid, % do patrimônio
+MAX_DAILY_LOSS_PCT = "5"       # perda diária que pausa o bot
+STOP_LOSS_PCT = "5"            # abaixo de (low - 5%) fecha tudo e para o grid
+ALLOWED_MARKETS = "BTC,ETH,SOL"
+
+# Segredos (wrangler secret put ... ou GitHub Actions):
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, OWNER_CHAT_ID
