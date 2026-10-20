@@ -42,7 +42,8 @@ Sem o Serverless ligado, o Worker também funciona sozinho com webhook direto (`
 
 ## Mini App (Telegram Serverless)
 
-Pasta `miniapp/` (projeto `tgcloud`): `web/` é a Mini App estática; `tgcloud/handlers/message.js` encaminha as
+Pasta `miniapp/` (projeto `tgcloud`): `web/` é a Mini App estática (HTML/JS/CSS puros, ícones SVG inline em
+`web/icons.js`, sem emojis); `tgcloud/handlers/message.js` encaminha as
 mensagens ao Worker; `tgcloud/endpoints/*` (`state`, `contracts`, `price`, `chart`, `trades`, `configure`,
 `control`) repassam para a API do Worker. Abas:
 

@@ -59,6 +59,18 @@ td:first-child, th:first-child { text-align: left; }
 th { color: var(--hint); font-weight: 500; }
 .up { color: var(--green); } .down { color: var(--red); }
 nav { position: fixed; bottom: 0; left: 0; right: 0; display: grid; grid-template-columns: repeat(4, 1fr); background: var(--bg); border-top: 1px solid color-mix(in srgb, var(--hint) 25%, transparent); padding-bottom: env(safe-area-inset-bottom); }
-nav button { background: none; color: var(--hint); border-radius: 0; padding: 8px 0 10px; font-size: 18px; font-weight: 500; }
+nav button { background: none; color: var(--hint); border-radius: 0; padding: 8px 0 10px; font-weight: 500; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+nav button .ic { width: 22px; height: 22px; }
 nav button span { display: block; font-size: 11px; }
 nav button.active { color: var(--link); }
+
+.ic { width: 18px; height: 18px; flex: none; vertical-align: -3px; }
+button .ic { margin-right: 6px; }
+button { display: inline-flex; align-items: center; justify-content: center; }
+.note { display: flex; gap: 8px; align-items: flex-start; }
+.note + .note { margin-top: 6px; }
+.note .ic { margin-top: 1px; }
+.ev { display: inline-flex; align-items: center; gap: 4px; }
+.ev .ic { width: 15px; height: 15px; }
+.ev-open { color: var(--link); }
+.item .tag .ic { width: 18px; height: 18px; color: var(--hint); }
