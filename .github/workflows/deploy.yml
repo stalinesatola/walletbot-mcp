@@ -40,7 +40,32 @@ jobs:
             TELEGRAM_BOT_TOKEN
             TELEGRAM_WEBHOOK_SECRET
             OWNER_CHAT_ID
+            API_SECRET
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
           OWNER_CHAT_ID: ${{ secrets.OWNER_CHAT_ID }}
+          API_SECRET: ${{ secrets.API_SECRET }}
+
+  # Mini App + handlers/endpoints no Telegram Serverless (tgcloud). Só roda se TGCLOUD_TOKEN existir.
+  deploy-miniapp:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: TELEGRAM_BOT_TOKEN
+    defaults:
+      run:
+        working-directory: miniapp
+    env:
+      TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Push para o Telegram Serverless
+        if: env.TGCLOUD_TOKEN != ''
+        run: |
+          npm install --no-audit --no-fund
+          npx tgcloud push
+          npx tgcloud migrate --safe --yes

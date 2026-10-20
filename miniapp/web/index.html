@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>walletbot</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="title">walletbot <span id="mode" class="pill">…</span> <span id="run" class="pill">…</span></div>
+    <div id="price" class="price">—</div>
+  </header>
+
+  <main>
+    <section id="tab-painel" class="tab active">
+      <div id="alert" class="alert hidden"></div>
+      <div class="card">
+        <div class="row"><span>Grid</span><b id="g-desc">—</b></div>
+        <div class="row"><span>Por trade</span><b id="g-trade">—</b></div>
+      </div>
+      <div class="card">
+        <h3>Posição</h3>
+        <div id="pos">Nenhuma posição aberta.</div>
+      </div>
+      <div class="card">
+        <h3>Gráfico <small id="chart-src"></small></h3>
+        <svg id="chart" viewBox="0 0 360 220" preserveAspectRatio="none"></svg>
+        <div class="legend"><i class="l-lvl"></i>degraus <i class="l-tp"></i>TP <i class="l-sl"></i>SL <i class="l-in"></i>entrada</div>
+      </div>
+      <div class="card stats" id="stats"></div>
+    </section>
+
+    <section id="tab-pares" class="tab">
+      <div class="card">
+        <input id="q" type="search" placeholder="Buscar par (BTC, ETH, NVDA…)" />
+        <label class="check"><input id="only-liquid" type="checkbox" checked /> só pares líquidos e liberados</label>
+      </div>
+      <div id="pair-detail" class="card hidden"></div>
+      <div id="pairs" class="list"></div>
+    </section>
+
+    <section id="tab-hist" class="tab">
+      <div class="card">
+        <h3>Patrimônio</h3>
+        <svg id="equity" viewBox="0 0 360 140" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="card"><h3>Trades</h3><div id="trades">—</div></div>
+    </section>
+
+    <section id="tab-ctrl" class="tab">
+      <div class="card">
+        <h3>Configurar grid</h3>
+        <form id="grid-form">
+          <label>Par <input name="market" required placeholder="BTC" /></label>
+          <div class="two">
+            <label>Low <input name="low" type="number" step="any" required /></label>
+            <label>High <input name="high" type="number" step="any" required /></label>
+          </div>
+          <div class="three">
+            <label>Degraus <input name="levels" type="number" min="2" max="50" value="8" required /></label>
+            <label>Margem $ <input name="marginUsd" type="number" step="0.01" value="2.2" required /></label>
+            <label>Alav. <input name="leverage" type="number" min="1" max="3" value="3" required /></label>
+          </div>
+          <button type="submit">Salvar grid</button>
+        </form>
+      </div>
+      <div class="card buttons">
+        <button data-action="run">▶️ Iniciar</button>
+        <button data-action="stop">⏹️ Parar</button>
+        <button data-action="resume">⏯️ Retomar pausa</button>
+        <button data-action="closeall" class="danger">Fechar posição</button>
+        <button data-action="mode" data-mode="paper">Modo paper</button>
+        <button data-action="mode" data-mode="live" class="danger">Modo live</button>
+      </div>
+      <div id="ctrl-msg" class="card hidden"></div>
+    </section>
+  </main>
+
+  <nav>
+    <button data-tab="painel" class="active">📊<span>Painel</span></button>
+    <button data-tab="pares">🔎<span>Pares</span></button>
+    <button data-tab="hist">🧾<span>Histórico</span></button>
+    <button data-tab="ctrl">⚙️<span>Controles</span></button>
+  </nav>
+  <script src="app.js"></script>
+</body>
+</html>

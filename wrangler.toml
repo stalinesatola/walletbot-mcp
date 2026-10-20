@@ -20,10 +20,15 @@ MAX_ORDER_PCT = "25"           # margem máxima por ordem, % do patrimônio (25%
 MAX_TOTAL_EXPOSURE_PCT = "50"  # margem total máxima em posições do grid, % do patrimônio
 MAX_DAILY_LOSS_PCT = "5"       # perda diária que pausa o bot
 STOP_LOSS_PCT = "5"            # abaixo de (low - 5%) fecha tudo e para o grid
-ALLOWED_MARKETS = "BTC,ETH,SOL"
+# "*" = todos os contratos ativos do Walt com volume 24h >= MIN_VOLUME_24H_USD
+ALLOWED_MARKETS = "*"
+MIN_VOLUME_24H_USD = "1000000"
+# URL da Mini App no Telegram Serverless (https://app<id>.tgcloud.ai/), impressa pelo `npx tgcloud push`.
+# Com ela preenchida, /setup cria o botão de menu e NÃO mexe no webhook (que é do tgcloud).
+MINIAPP_URL = ""
 # Canal/grupo que recebe os alertas automáticos (o bot precisa ser admin com permissão de postar).
 # Vazio = alertas vão para OWNER_CHAT_ID.
 ALERT_CHAT_ID = "-1002200192005"
 
 # Segredos (wrangler secret put ... ou GitHub Actions):
-#   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, OWNER_CHAT_ID
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, OWNER_CHAT_ID, API_SECRET

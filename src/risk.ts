@@ -8,6 +8,10 @@ export interface RiskContext {
 
 export type RiskDecision = { ok: true } | { ok: false; reason: string };
 
+export function marketAllowed(limits: RiskLimits, market: string): boolean {
+  return limits.allowedMarkets.includes("*") || limits.allowedMarkets.includes(market.toUpperCase());
+}
+
 export function dailyLossExceeded(ctx: RiskContext, limits: RiskLimits): boolean {
   if (!(ctx.dayStartEquityUsd > 0)) return false;
   const lossPct = ((ctx.dayStartEquityUsd - ctx.equityUsd) / ctx.dayStartEquityUsd) * 100;
@@ -22,7 +26,7 @@ export function checkOpen(
   ctx: RiskContext,
   limits: RiskLimits,
 ): RiskDecision {
-  if (!limits.allowedMarkets.includes(market.toUpperCase()))
+  if (!marketAllowed(limits, market))
     return { ok: false, reason: `mercado ${market} fora da whitelist (${limits.allowedMarkets.join(",")})` };
   if (leverage > limits.maxLeverage) return { ok: false, reason: `alavancagem ${leverage}x > máx ${limits.maxLeverage}x` };
   if (!(ctx.equityUsd > 0)) return { ok: false, reason: "patrimônio zero ou desconhecido (deposite USDC na conta do agente)" };

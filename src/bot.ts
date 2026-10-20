@@ -3,6 +3,7 @@ import { riskLimits, type Env } from "./env";
 import { McpClient } from "./mcp";
 import { getAccessToken } from "./oauth";
 import { publicMid } from "./prices";
+import { pushEquity, pushPrice, recordTrade } from "./history";
 import { checkOpen, dailyLossExceeded } from "./risk";
 import { loadState, saveState, type BotState } from "./state";
 import { exitHit, planEntry, type GridConfig, type GridPosition } from "./strategy/grid";
@@ -46,11 +47,31 @@ export async function tick(env: Env): Promise<string[]> {
   return msgs;
 }
 
-function recordClose(state: BotState, pnl: number): void {
+async function recordClose(
+  env: Env,
+  state: BotState,
+  pos: GridPosition,
+  exit: number,
+  pnl: number,
+  reason: "tp" | "sl" | "manual",
+): Promise<void> {
   state.stats.trades++;
   state.stats.realizedPnl += pnl;
   if (pnl >= 0) state.stats.wins++;
   else state.stats.losses++;
+  const cfg = state.grid!.cfg;
+  await recordTrade(env, {
+    at: new Date().toISOString(),
+    market: cfg.market,
+    event: "close",
+    price: exit,
+    marginUsd: pos.marginUsd,
+    leverage: cfg.leverage,
+    pnl,
+    reason,
+    mode: state.mode,
+  });
+  if (state.mode === "paper") pushEquity(state, state.paper.cash, true);
 }
 
 async function runTick(env: Env, state: BotState, msgs: string[]): Promise<void> {
@@ -67,6 +88,14 @@ async function runTick(env: Env, state: BotState, msgs: string[]): Promise<void>
 
   const price = await currentPrice(cfg, walt);
   state.lastPrice = price;
+  pushPrice(state, cfg.market, price);
+  if (live) {
+    // saldo para a curva de patrimônio: no máximo uma consulta por hora
+    const last = state.equity?.[state.equity.length - 1];
+    if (!last || Date.now() - last[0] >= 3_600_000) pushEquity(state, await walt!.balanceUsd().catch(() => last?.[1] ?? 0));
+  } else {
+    pushEquity(state, paperEquity(state, price));
+  }
 
   // 1) a posição do grid ainda está aberta?
   if (grid.position) {
@@ -84,7 +113,7 @@ async function runTick(env: Env, state: BotState, msgs: string[]): Promise<void>
     const exit = closedBy === "tp" ? pos.takeProfit : pos.stopLoss;
     const pnl = positionPnl(pos, exit, cfg.contract.takerFeePct);
     if (!live) state.paper.cash += pnl;
-    recordClose(state, pnl);
+    await recordClose(env, state, pos, exit, pnl, closedBy);
     grid.position = undefined;
     if (closedBy === "tp") {
       msgs.push(`🟢 Take-profit ${cfg.market} nível ${pos.level + 1}: saída ~$${exit} (PnL ~$${pnl.toFixed(2)})`);
@@ -135,6 +164,15 @@ async function runTick(env: Env, state: BotState, msgs: string[]): Promise<void>
   }
   grid.position = plan;
   state.lastBlock = undefined;
+  await recordTrade(env, {
+    at: plan.openedAt,
+    market: cfg.market,
+    event: "open",
+    price,
+    marginUsd: cfg.marginUsd,
+    leverage: cfg.leverage,
+    mode: state.mode,
+  });
   msgs.push(
     `🔵 Long ${cfg.market} nível ${plan.level + 1} a ~$${price}: margem $${cfg.marginUsd} ${cfg.leverage}x | TP $${plan.takeProfit} | SL $${plan.stopLoss}${live ? "" : " (paper)"}`,
   );
@@ -150,6 +188,11 @@ export async function closeAll(env: Env): Promise<string> {
   if (state.mode === "live") {
     if (!walt) return "Walt não conectado — feche a posição pelo app Walt.";
     if (await walt.openPosition(cfg.contract.contractId)) await walt.closePosition(cfg.contract.contractId);
+    const pos = state.grid.position;
+    if (pos) {
+      const price = await currentPrice(cfg, walt);
+      await recordClose(env, state, pos, price, positionPnl(pos, price, cfg.contract.takerFeePct), "manual");
+    }
     state.grid.position = undefined;
     await saveState(env, state);
     return `Ordem de fechamento enviada para ${cfg.market}. Grid parado. Confira com /status.`;
@@ -160,7 +203,7 @@ export async function closeAll(env: Env): Promise<string> {
     const price = await currentPrice(cfg, walt);
     const pnl = positionPnl(pos, price, cfg.contract.takerFeePct);
     state.paper.cash += pnl;
-    recordClose(state, pnl);
+    await recordClose(env, state, pos, price, pnl, "manual");
     state.grid.position = undefined;
     msg = `Posição paper fechada a $${price} (PnL $${pnl.toFixed(2)}). Grid parado.`;
   }

@@ -1,9 +1,10 @@
 import { tick } from "./bot";
-import { handleCommand } from "./commands";
+import { handleApi } from "./api";
+import { handleUpdate } from "./commands";
 import type { Env } from "./env";
 import { handleCallback } from "./oauth";
-import { acquireLock, loadTools, releaseLock } from "./state";
-import { COMMANDS, notifyOwner, send, tg, timingSafeEqual, type TgUpdate } from "./telegram";
+import { loadTools } from "./state";
+import { COMMANDS, notifyOwner, tg, timingSafeEqual, type TgUpdate } from "./telegram";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -15,9 +16,11 @@ export default {
         return new Response("forbidden", { status: 403 });
       const update = (await req.json()) as TgUpdate;
       // responde 200 na hora para o Telegram não reenviar; processa em segundo plano
-      ctx.waitUntil(onMessage(env, update));
+      ctx.waitUntil(handleUpdate(env, update));
       return new Response("ok");
     }
+
+    if (url.pathname.startsWith("/api/")) return handleApi(req, env, ctx);
 
     if (req.method === "GET" && url.pathname === "/oauth/callback") {
       try {
@@ -35,16 +38,25 @@ export default {
       const secret = url.searchParams.get("secret") ?? "";
       if (!env.TELEGRAM_WEBHOOK_SECRET || !timingSafeEqual(secret, env.TELEGRAM_WEBHOOK_SECRET))
         return new Response("forbidden", { status: 403 });
-      const webhook = await tg(env, "setWebhook", {
-        url: `${url.origin}/telegram`,
-        secret_token: env.TELEGRAM_WEBHOOK_SECRET,
-        allowed_updates: ["message"],
-        drop_pending_updates: true,
-      });
+      // Com o Telegram Serverless ligado o webhook é do tgcloud (que encaminha para /api/telegram);
+      // só registra o webhook direto no Worker quando não há Mini App configurada.
+      const webhook = env.MINIAPP_URL
+        ? "gerenciado pelo Telegram Serverless"
+        : await tg(env, "setWebhook", {
+            url: `${url.origin}/telegram`,
+            secret_token: env.TELEGRAM_WEBHOOK_SECRET,
+            allowed_updates: ["message"],
+            drop_pending_updates: true,
+          });
       const commands = await tg(env, "setMyCommands", {
         commands: COMMANDS.map(([command, description]) => ({ command, description })),
       });
-      return Response.json({ webhook, commands });
+      const menu = env.MINIAPP_URL
+        ? await tg(env, "setChatMenuButton", {
+            menu_button: { type: "web_app", text: "Painel", web_app: { url: env.MINIAPP_URL } },
+          })
+        : "sem MINIAPP_URL";
+      return Response.json({ webhook, commands, menu });
     }
 
     // tools/list completo salvo pelo último /tools (protegido pelo mesmo segredo do webhook)
@@ -63,34 +75,12 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       (async () => {
-        if (!(await acquireLock(env))) return;
-        try {
-          await notifyOwner(env, await tick(env));
-        } finally {
-          await releaseLock(env);
-        }
+        // sem lock no KV: o plano grátis tem 1000 escritas/dia e o tick leva segundos (cron de 5 min)
+        await notifyOwner(env, await tick(env));
       })(),
     );
   },
 } satisfies ExportedHandler<Env>;
-
-async function onMessage(env: Env, update: TgUpdate): Promise<void> {
-  const msg = update.message;
-  if (!msg?.text) return;
-  const chatId = String(msg.chat.id);
-  if (!env.OWNER_CHAT_ID) {
-    await send(env, chatId, `Seu chat id é ${chatId}. Configure o secret OWNER_CHAT_ID com esse valor.`);
-    return;
-  }
-  if (chatId !== env.OWNER_CHAT_ID) return; // só o dono controla o bot
-  let reply: string;
-  try {
-    reply = await handleCommand(env, msg.text);
-  } catch (e) {
-    reply = `❌ ${(e as Error).message}`;
-  }
-  await send(env, chatId, reply);
-}
 
 function html(title: string, body: string, status = 200): Response {
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);

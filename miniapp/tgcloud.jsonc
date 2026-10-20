@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/@tgcloud/cli/schema/tgcloud.json",
+  // Mini App estática (sem build): servida em https://app<id>.tgcloud.ai/
+  "static": {
+    "source": "web",
+    "spa": true
+  }
+}

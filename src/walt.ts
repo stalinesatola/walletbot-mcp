@@ -130,6 +130,8 @@ export function parseContract(c: Record<string, unknown>): ContractInfo {
     maxLeverage: n("max_leverage"),
     takerFeePct: n("taker_fee_pct"),
     priceSlippage: n("price_slippage"),
+    volume24hUsd: n("volume_24h_usd"),
+    fundingRateHourly: n("funding_rate_hourly"),
   };
 }
 
