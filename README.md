@@ -65,9 +65,18 @@ banco do tgcloud e apaga a mensagem. Só esse user id abre os endpoints da Mini 
    (a deste bot é `https://app8936339348.tgcloud.ai/`).
 3. Coloque essa URL em `MINIAPP_URL` no `wrangler.toml` (novo deploy) e abra
    `/setup?secret=<TELEGRAM_WEBHOOK_SECRET>`: cria o botão de menu **Painel** sem mexer no webhook.
-4. No chat do bot: `/link <API_SECRET>`.
+4. No chat do bot: `/link <API_SECRET>`. O bot apaga a mensagem e responde "✅ Vinculado ao Worker".
 
-Local: `cd miniapp && npm install && npx tgcloud login && npx tgcloud push && npx tgcloud migrate`.
+**Status deste bot:** ativado. Mini App em `https://app8936339348.tgcloud.ai/`; o `/setup` respondeu
+`webhook: "gerenciado pelo Telegram Serverless"`, comandos e botão de menu **Painel** registrados; `/link` concluído.
+
+**Problemas comuns:**
+- `deploy-miniapp` com *"never synced"*: o runner não tem `.tgcloud/`; o workflow já roda `tgcloud fetch` antes do push.
+- `--yes and --safe are mutually exclusive`: use só `tgcloud migrate --safe`.
+- Comandos sem resposta com o Serverless ligado: falta o `/link` (o handler responde "Bot em configuração").
+- Desligar o Serverless no BotFather: abra `/setup` com `MINIAPP_URL` vazio para o webhook voltar ao Worker.
+
+Local: `cd miniapp && npm install && npx tgcloud login && npx tgcloud fetch && npx tgcloud push && npx tgcloud migrate`.
 
 ### API do Worker (`/api/*`, header `X-Api-Key: <API_SECRET>`)
 
