@@ -65,8 +65,9 @@ export class Walt {
 
   /** Saldo disponível em USDC. */
   async balanceUsd(): Promise<number> {
-    const n = usdcBalance(await this.call("balance_get"));
-    if (n === undefined) throw new WaltError("não achei o saldo USDC na resposta de balance_get");
+    const data = await this.call("balance_get");
+    const n = usdcBalance(data);
+    if (n === undefined) throw new WaltError(`não achei o saldo USDC/USDT em balance_get: ${JSON.stringify(data).slice(0, 300)}`);
     return n;
   }
 
@@ -171,7 +172,7 @@ export function findOpenPosition(data: unknown, contractId: number): WaltPositio
 /** Procura o saldo USDC disponível: lista de balances {asset/currency, available/amount} ou campos diretos. */
 export function usdcBalance(data: unknown): number | undefined {
   const isUsdc = (o: Record<string, unknown>) =>
-    ["asset", "currency", "symbol", "quote_asset", "code"].some((k) => typeof o[k] === "string" && /^USDC?$/i.test(o[k] as string));
+    ["asset", "currency", "symbol", "quote_asset", "code"].some((k) => typeof o[k] === "string" && /^USD[CT]?$/i.test(o[k] as string));
   const amountKeys = ["available", "available_amount", "availableBalance", "available_balance", "free", "balance", "amount", "total"];
   const visit = (v: unknown, depth: number): number | undefined => {
     if (depth > 5 || !v || typeof v !== "object") return undefined;
