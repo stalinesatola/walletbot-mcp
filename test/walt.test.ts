@@ -25,7 +25,8 @@ describe("adaptador Walt", () => {
   it("lê saldo USDC", () => {
     expect(usdcBalance({ balances: [{ currency: "TON", available: "5" }, { currency: "USDC", available: "12.5" }] })).toBe(12.5);
     expect(usdcBalance({ asset: "USDC", amount: 3 })).toBe(3);
-    expect(usdcBalance({ accounts: [{ currency: "USDT", available: "9.993797" }] })).toBe(9.993797);
+    // formato real do balance_get
+    expect(usdcBalance({ accounts: [{ currency: "USDT", balance_available: "9.993797" }] })).toBe(9.993797);
     expect(usdcBalance({ foo: 1 })).toBeUndefined();
   });
 

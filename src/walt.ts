@@ -173,7 +173,7 @@ export function findOpenPosition(data: unknown, contractId: number): WaltPositio
 export function usdcBalance(data: unknown): number | undefined {
   const isUsdc = (o: Record<string, unknown>) =>
     ["asset", "currency", "symbol", "quote_asset", "code"].some((k) => typeof o[k] === "string" && /^USD[CT]?$/i.test(o[k] as string));
-  const amountKeys = ["available", "available_amount", "availableBalance", "available_balance", "free", "balance", "amount", "total"];
+  const amountKeys = ["balance_available", "available", "available_amount", "availableBalance", "available_balance", "free", "balance", "amount", "total"];
   const visit = (v: unknown, depth: number): number | undefined => {
     if (depth > 5 || !v || typeof v !== "object") return undefined;
     if (!Array.isArray(v) && isUsdc(v as Record<string, unknown>)) {
