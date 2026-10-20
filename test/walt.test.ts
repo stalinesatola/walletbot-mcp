@@ -46,3 +46,13 @@ describe("walt adapter", () => {
     expect(await readResponse(res, 2)).toMatchObject({ result: { ok: true } });
   });
 });
+
+describe("oauth callback colado", () => {
+  it("extrai code e state da URL localhost", async () => {
+    const { callbackParams } = await import("../src/oauth");
+    const p = callbackParams("http://localhost:8787/oauth/callback?code=abc&state=xyz");
+    expect(p.get("code")).toBe("abc");
+    expect(p.get("state")).toBe("xyz");
+    expect(callbackParams("code=1&state=2").get("state")).toBe("2");
+  });
+});

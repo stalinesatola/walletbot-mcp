@@ -1,7 +1,7 @@
 import { riskLimits, type Env } from "./env";
 import { closeAll, connectWalt, currentPrice } from "./bot";
 import { McpClient, resultText } from "./mcp";
-import { disconnect, getAccessToken, startAuthorization } from "./oauth";
+import { callbackParams, disconnect, getAccessToken, handleCallback, startAuthorization } from "./oauth";
 import { PaperExecutor } from "./paper";
 import { gridExposure, loadMap, loadState, saveMap, saveState, saveToolNames, defaultState } from "./state";
 import { buildLevels, validateConfig, type GridConfig } from "./strategy/grid";
@@ -9,7 +9,7 @@ import { COMMANDS } from "./telegram";
 import { ROLES, proposeMap, type Role } from "./walt";
 
 /** Processa um comando do dono e devolve a resposta em texto. */
-export async function handleCommand(env: Env, text: string, origin: string): Promise<string> {
+export async function handleCommand(env: Env, text: string): Promise<string> {
   const [rawCmd, ...args] = text.trim().split(/\s+/);
   const cmd = rawCmd.replace(/^\//, "").replace(/@.*$/, "").toLowerCase();
   switch (cmd) {
@@ -19,7 +19,18 @@ export async function handleCommand(env: Env, text: string, origin: string): Pro
     case "status":
       return status(env);
     case "connect":
-      return `Abra este link, autorize no Walt e confirme no Telegram:\n${await startAuthorization(env, origin)}`;
+      return [
+        "1) Abra o link, autorize no Walt e confirme no Telegram:",
+        await startAuthorization(env),
+        "",
+        "2) O navegador vai abrir uma página http://localhost:8787/… que não carrega — é esperado.",
+        "3) Copie o endereço completo dessa página e envie aqui: /code <endereço>",
+        "Faça em poucos minutos: o código expira rápido.",
+      ].join("\n");
+    case "code":
+      if (!args.length) return "Uso: /code <endereço completo da página localhost após autorizar>";
+      await handleCallback(env, callbackParams(args.join(" ")));
+      return "✅ Walt conectado! Use /tools para ver as tools e revisar o mapeamento.";
     case "disconnect":
       await disconnect(env);
       return "Conta Walt desconectada.";

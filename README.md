@@ -40,6 +40,7 @@ Walt OAuth ─────────▶ Worker /oauth/callback ──▶ token
 5. No Telegram:
    ```
    /connect            → abre o OAuth do Walt, confirme no Telegram
+   /code <endereço>    → cole o endereço http://localhost:8787/… em que o navegador parou
    /tools              → lista as tools e o mapeamento proposto
    /map …  /map confirm
    /grid BTC 60000 70000 10 100 2
@@ -53,7 +54,7 @@ Walt OAuth ─────────▶ Worker /oauth/callback ──▶ token
 | Comando | O que faz |
 |---|---|
 | `/status` | modo, grid, posições, PnL |
-| `/connect`, `/disconnect` | OAuth do Walt |
+| `/connect`, `/code <url>`, `/disconnect` | OAuth do Walt (o Walt só aceita redirect para localhost, então o endereço final é colado no bot) |
 | `/tools [refresh]` | tools do Walt + mapeamento proposto |
 | `/map <role> <tool> [json]` | ajusta o mapeamento (`price`, `account`, `open`, `close`); placeholders `{market} {sizeUsd} {qty} {leverage} {price}` |
 | `/map confirm` | confirma o mapeamento (exigido para live) |

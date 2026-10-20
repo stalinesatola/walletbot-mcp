@@ -15,7 +15,7 @@ export default {
         return new Response("forbidden", { status: 403 });
       const update = (await req.json()) as TgUpdate;
       // responde 200 na hora para o Telegram não reenviar; processa em segundo plano
-      ctx.waitUntil(onMessage(env, update, url.origin));
+      ctx.waitUntil(onMessage(env, update));
       return new Response("ok");
     }
 
@@ -64,7 +64,7 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function onMessage(env: Env, update: TgUpdate, origin: string): Promise<void> {
+async function onMessage(env: Env, update: TgUpdate): Promise<void> {
   const msg = update.message;
   if (!msg?.text) return;
   const chatId = String(msg.chat.id);
@@ -75,7 +75,7 @@ async function onMessage(env: Env, update: TgUpdate, origin: string): Promise<vo
   if (chatId !== env.OWNER_CHAT_ID) return; // só o dono controla o bot
   let reply: string;
   try {
-    reply = await handleCommand(env, msg.text, origin);
+    reply = await handleCommand(env, msg.text);
   } catch (e) {
     reply = `❌ ${(e as Error).message}`;
   }

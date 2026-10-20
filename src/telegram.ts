@@ -29,6 +29,7 @@ export const COMMANDS: Array<[string, string]> = [
   ["help", "Ajuda"],
   ["status", "Estado do bot, grid e PnL"],
   ["connect", "Conectar a conta Walt (OAuth)"],
+  ["code", "Concluir o /connect: /code <endereço localhost>"],
   ["tools", "Listar tools do Walt e o mapeamento"],
   ["grid", "Configurar grid: /grid BTC 60000 70000 10 100 [alav]"],
   ["run", "Iniciar o grid"],

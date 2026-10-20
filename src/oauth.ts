@@ -2,6 +2,10 @@
 import type { Env } from "./env";
 
 const SCOPE = "perps.trade perps.readonly";
+// O Walt só aceita redirect para localhost/127.0.0.1 (clientes locais). No Worker o navegador
+// cai numa página que não carrega; o dono copia essa URL e envia com /code.
+// Com `wrangler dev` na porta 8787 o callback funciona direto em /oauth/callback.
+export const REDIRECT_URI = "http://localhost:8787/oauth/callback";
 
 interface AuthServerMeta {
   authorization_endpoint: string;
@@ -58,9 +62,9 @@ async function ensureClient(env: Env, meta: AuthServerMeta, redirectUri: string)
 }
 
 /** Gera a URL de autorização que o dono abre no navegador. */
-export async function startAuthorization(env: Env, origin: string): Promise<string> {
+export async function startAuthorization(env: Env): Promise<string> {
   const meta = await metadata(env);
-  const client = await ensureClient(env, meta, `${origin}/oauth/callback`);
+  const client = await ensureClient(env, meta, REDIRECT_URI);
   const state = randomString(24);
   const verifier = randomString(48);
   await env.STATE.put(pendingKey(state), verifier, { expirationTtl: 900 });
@@ -95,6 +99,13 @@ export async function handleCallback(env: Env, params: URLSearchParams): Promise
     code_verifier: verifier,
     resource: env.WALT_MCP_URL,
   });
+}
+
+/** Aceita a URL completa do redirect (ou só a query string) colada pelo dono. */
+export function callbackParams(input: string): URLSearchParams {
+  const text = input.trim();
+  const query = text.includes("?") ? text.slice(text.indexOf("?") + 1) : text;
+  return new URLSearchParams(query.split("#")[0]);
 }
 
 /** Devolve um access token válido (renovando se faltar < 2 min), ou null se não conectado. */
