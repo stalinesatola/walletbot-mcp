@@ -16,7 +16,7 @@ WALT_MCP_URL = "https://walletbot.me/bot-relay/public-api/mcp"
 WALT_AUTH_ISSUER = "https://walletbot.me/bot-relay/public-api"
 # Travas de risco (perfil conservador).
 MAX_LEVERAGE = "3"
-MAX_ORDER_PCT = "5"            # margem máxima por ordem, % do patrimônio
+MAX_ORDER_PCT = "25"           # margem máxima por ordem, % do patrimônio (25% para operar com saldo ~$10)
 MAX_TOTAL_EXPOSURE_PCT = "50"  # margem total máxima em posições do grid, % do patrimônio
 MAX_DAILY_LOSS_PCT = "5"       # perda diária que pausa o bot
 STOP_LOSS_PCT = "5"            # abaixo de (low - 5%) fecha tudo e para o grid
