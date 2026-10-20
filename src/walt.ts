@@ -41,10 +41,11 @@ export class Walt {
     return (data.contracts ?? []).filter((c) => c.is_active !== false).map(parseContract);
   }
 
-  /** Preço (fechamento de 1m). O guia não diz se marketId é o id numérico ou o nome — tenta os dois. */
+  /** Preço (fechamento de 1m). marketId é BASE-QUOTE-INSTRUMENT, ex.: "BTC-USD-PERP". */
   async rate(contract: ContractInfo): Promise<number> {
+    const base = contract.name.replace(/-USDC?$/i, "");
     let lastErr: unknown;
-    for (const marketId of [contract.contractId, contract.name]) {
+    for (const marketId of [`${base}-USD-PERP`, `${base}-USDC-PERP`]) {
       try {
         const data = (await this.call("perps_latest_rate", { marketId })) as { rate?: unknown };
         const rate = Number(data?.rate);
