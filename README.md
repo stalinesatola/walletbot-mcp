@@ -90,3 +90,11 @@ npm test && npm run typecheck
 cp .dev.vars.example .dev.vars   # preencha
 npx wrangler dev                 # use um túnel (ex.: cloudflared) para testar o webhook
 ```
+
+## Licença
+
+[MIT](LICENSE) © 2026 Staline Satola. Uso por sua conta e risco: trading de perpétuos alavancados pode
+causar perda total do capital.
+
+> A memória do projeto para o Claude Code fica em `.secrets/CLAUDE.md`, que **não é versionado**
+> (`.gitignore`). Mantenha uma cópia local em `C:\GESTEM\walletbot-mcp\.secrets\CLAUDE.md`.
