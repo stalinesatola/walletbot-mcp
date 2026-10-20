@@ -48,8 +48,13 @@ export async function saveMap(env: Env, m: ToolMap): Promise<void> {
   await env.STATE.put(K_MAP, JSON.stringify(m));
 }
 
-export async function saveToolNames(env: Env, names: string[]): Promise<void> {
-  await env.STATE.put(K_TOOLS, JSON.stringify(names));
+/** Guarda o tools/list completo (descrições + schemas) para inspeção em /tools.json. */
+export async function saveTools(env: Env, tools: unknown[]): Promise<void> {
+  await env.STATE.put(K_TOOLS, JSON.stringify(tools));
+}
+
+export async function loadTools(env: Env): Promise<unknown[] | null> {
+  return env.STATE.get<unknown[]>(K_TOOLS, "json");
 }
 
 /** Lock best-effort (KV é eventualmente consistente; o cron de 5 min dá folga). */

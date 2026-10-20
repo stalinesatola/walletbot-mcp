@@ -3,7 +3,7 @@ import { closeAll, connectWalt, currentPrice } from "./bot";
 import { McpClient, resultText } from "./mcp";
 import { callbackParams, disconnect, getAccessToken, handleCallback, startAuthorization } from "./oauth";
 import { PaperExecutor } from "./paper";
-import { gridExposure, loadMap, loadState, saveMap, saveState, saveToolNames, defaultState } from "./state";
+import { gridExposure, loadMap, loadState, saveMap, saveState, saveTools, defaultState } from "./state";
 import { buildLevels, validateConfig, type GridConfig } from "./strategy/grid";
 import { COMMANDS } from "./telegram";
 import { ROLES, proposeMap, type Role } from "./walt";
@@ -125,7 +125,7 @@ async function client(env: Env): Promise<McpClient> {
 
 async function tools(env: Env, refresh: boolean): Promise<string> {
   const list = await (await client(env)).listTools();
-  await saveToolNames(env, list.map((t) => t.name));
+  await saveTools(env, list);
   let current = await loadMap(env);
   if (refresh || Object.keys(current.bindings).length === 0) {
     current = proposeMap(list);
