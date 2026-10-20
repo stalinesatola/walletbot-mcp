@@ -67,5 +67,8 @@ jobs:
         if: env.TGCLOUD_TOKEN != ''
         run: |
           npm install --no-audit --no-fund
+          # o runner não tem o estado local (.tgcloud/ fora do git): sincroniza o snapshot com a
+          # nuvem antes do push, mantendo a checagem de concorrência (sem --force)
+          npx tgcloud fetch
           npx tgcloud push
           npx tgcloud migrate --safe
