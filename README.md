@@ -9,11 +9,17 @@ e hospedado 100% serverless em **Cloudflare Workers** (webhook do Telegram + Cro
 
 ## Como funciona
 
+Arquitetura **híbrida**: o **Telegram Serverless** (tgcloud) recebe as mensagens e hospeda a Mini App; o
+**Cloudflare Worker** faz o trading (o Serverless não tem cron).
+
 ```
-Telegram ──webhook──▶ Worker /telegram ──▶ comandos (/grid, /run, /status…)
-Cron */5 min ───────▶ Worker scheduled ──▶ preço → grid → travas de risco → ordem (paper | Walt MCP)
-Walt OAuth ─────────▶ Worker /oauth/callback ──▶ tokens no KV (refresh automático)
+Telegram ─▶ tgcloud handlers/message.js ──▶ Worker POST /api/telegram ──▶ comandos (/grid, /run, /status…)
+Mini App ─▶ Telegram.WebApp.Serverless.call ─▶ tgcloud endpoints/* ──▶ Worker /api/* (X-Api-Key)
+Cron */5 min ─────────▶ Worker scheduled ──▶ preço → grid → travas de risco → ordem (paper | Walt MCP)
+Walt OAuth ───────────▶ tokens no KV do Worker (refresh automático)
 ```
+
+Sem o Serverless ligado, o Worker também funciona sozinho com webhook direto (`/telegram`).
 
 - **Estratégia** (`src/strategy/grid.ts`): grid de **posição única**, porque o Walt aceita só uma posição
   por contrato e não deixa aumentar uma posição aberta. A faixa `low`–`high` é dividida em N degraus.
@@ -23,6 +29,9 @@ Walt OAuth ─────────▶ Worker /oauth/callback ──▶ token
 - **Risco** (`src/risk.ts`, valores em `wrangler.toml`): alavancagem ≤ 3x (inteira e ≤ máx do contrato),
   margem ≤ `MAX_ORDER_PCT` do saldo por trade (hoje **25%**, para operar com ~$10), perda diária ≥ 5% pausa
   o bot, stop-loss 5% abaixo do `low`, whitelist BTC/ETH/SOL, tamanho mínimo do contrato validado no `/grid`.
+- **Pares**: `ALLOWED_MARKETS = "*"` libera todos os contratos ativos do Walt com volume 24h ≥
+  `MIN_VOLUME_24H_USD` ($1 mi). A Mini App lista os 127 contratos com volume, funding, alavancagem máxima e
+  margem mínima; os sem liquidez aparecem bloqueados.
 - **Alertas**: entradas, TP/SL, pausas, bloqueios de risco e erros vão para o canal `ALERT_CHAT_ID`
   (`wrangler.toml`; o bot precisa ser admin do canal). Se o envio falhar, o alerta cai no chat do dono.
 - **Walt MCP** (`src/walt.ts`): segue o `perps_guide`. Toda escrita é `perps_prepare_*` → `perps_execute_operation`
@@ -30,6 +39,47 @@ Walt OAuth ─────────▶ Worker /oauth/callback ──▶ token
   `marketId` no formato `BTC-USD-PERP`; o saldo vem de `balance_get` (`accounts[].balance_available`, USDT); um execute que falha **nunca é repetido**
   (o bot pausa e pede conferência, para evitar ordens duplicadas). OAuth 2.1 com PKCE e registro dinâmico;
   o Walt só aceita redirect para `localhost`, então o endereço final é colado no bot.
+
+## Mini App (Telegram Serverless)
+
+Pasta `miniapp/` (projeto `tgcloud`): `web/` é a Mini App estática; `tgcloud/handlers/message.js` encaminha as
+mensagens ao Worker; `tgcloud/endpoints/*` (`state`, `contracts`, `price`, `chart`, `trades`, `configure`,
+`control`) repassam para a API do Worker. Abas:
+
+- **Painel**: modo, status, preço, posição (entrada, TP, SL, PnL aberto, distância da liquidação, funding pago),
+  gráfico de 48 h (velas de 15 min da Hyperliquid, ou os preços gravados pelo bot) com degraus, TP, SL e entrada.
+- **Pares**: busca e filtro de liquidez; tocar num par mostra preço, margem mínima e faixa sugerida, e
+  "Usar no grid" preenche o formulário.
+- **Histórico**: trades (abertura, TP, SL, manual) e curva de patrimônio.
+- **Controles**: configurar o grid, iniciar/parar/retomar, fechar a posição e trocar paper/live (com confirmação).
+
+O Serverless não tem secrets e o repositório é público, então a chave da API **não fica no código**: o dono
+envia `/link <API_SECRET>` no chat do bot uma vez; o handler valida no Worker, grava a chave e o seu user id no
+banco do tgcloud e apaga a mensagem. Só esse user id abre os endpoints da Mini App.
+
+**Ativar:**
+1. No environment `TELEGRAM_BOT_TOKEN` do GitHub, crie `API_SECRET` (aleatório, longo) e `TGCLOUD_TOKEN`
+   (BotFather → Serverless → CLI Access).
+2. Rode o workflow (push na `main` ou *Run workflow*): o job `deploy` publica o Worker com o `API_SECRET` e o
+   `deploy-miniapp` faz `tgcloud push` + `migrate` e imprime a URL `https://app<id>.tgcloud.ai/`.
+3. Coloque essa URL em `MINIAPP_URL` no `wrangler.toml` (novo deploy) e abra
+   `/setup?secret=<TELEGRAM_WEBHOOK_SECRET>`: cria o botão de menu **Painel** sem mexer no webhook.
+4. No chat do bot: `/link <API_SECRET>`.
+
+Local: `cd miniapp && npm install && npx tgcloud login && npx tgcloud push && npx tgcloud migrate`.
+
+### API do Worker (`/api/*`, header `X-Api-Key: <API_SECRET>`)
+
+| Rota | O que faz |
+|---|---|
+| `GET state` | estado, grid (degraus, SL), posição paper/Walt ao vivo, PnL, travas |
+| `GET contracts` | contratos do Walt com volume, funding, `liquid`, `allowed` |
+| `GET price?market=&leverage=` | preço, margem mínima e faixa sugerida |
+| `GET chart?market=` | velas de 15 min (Hyperliquid) ou preços gravados |
+| `GET trades` | histórico de trades e curva de patrimônio |
+| `POST grid` | `{market, low, high, levels, marginUsd, leverage}` |
+| `POST control` | `{action: run\|stop\|resume\|closeall\|mode, mode?, confirm?}` |
+| `POST telegram` | update do Telegram encaminhado pelo tgcloud |
 
 ## Instalação
 
@@ -39,11 +89,14 @@ Walt OAuth ─────────▶ Worker /oauth/callback ──▶ token
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_WEBHOOK_SECRET` (string aleatória, só `A-Z a-z 0-9 _ -`)
    - `OWNER_CHAT_ID` (seu chat id; se deixar vazio, o bot responde qualquer mensagem com o seu id)
+   - `API_SECRET` (chave da API da Mini App) e, para a Mini App, `TGCLOUD_TOKEN`
    Os secrets podem estar no environment `TELEGRAM_BOT_TOKEN` (é o que o job `deploy` usa).
 3. Push na `main` (ou *Run workflow* manual) → o workflow roda testes e faz `wrangler deploy`.
-   A conta Cloudflare Free permite só 5 cron triggers; se o deploy falhar com `code: 10072`, libere um. O KV `walletbot-mcp-STATE` já está
+   A conta Cloudflare Free permite só 5 cron triggers; se o deploy falhar com `code: 10072`, libere um.
+   O KV grátis permite 1000 escritas/dia: o bot faz ~1 escrita por tick (288/dia) e grava trades só em eventos. O KV `walletbot-mcp-STATE` já está
    configurado em `wrangler.toml`.
-4. Registre o webhook abrindo uma vez:
+4. Sem o Telegram Serverless, registre o webhook direto no Worker abrindo uma vez (com `MINIAPP_URL`
+   preenchida, este passo só cria o botão de menu):
    `https://walletbot-mcp.<sua-conta>.workers.dev/setup?secret=<TELEGRAM_WEBHOOK_SECRET>`
 5. No Telegram:
    ```

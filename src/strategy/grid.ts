@@ -13,6 +13,8 @@ export interface ContractInfo {
   maxLeverage: number;
   takerFeePct: number;
   priceSlippage: number;
+  volume24hUsd?: number;
+  fundingRateHourly?: number;
 }
 
 export interface GridConfig {
@@ -106,4 +108,10 @@ export function exitHit(pos: GridPosition, price: number): "tp" | "sl" | null {
 
 export function roundPrice(p: number, decimals: number): number {
   return Number(p.toFixed(decimals));
+}
+
+/** Margem mínima (USDC) para abrir no contrato a `price` com `leverage` — o maior entre min_size_quote e o tamanho mínimo. */
+export function minMargin(contract: ContractInfo, price: number, leverage: number): number {
+  const minNotional = contract.minSizeBase * price * (1 + contract.priceSlippage);
+  return Math.max(contract.minSizeQuote, minNotional * (1 / leverage + contract.takerFeePct));
 }

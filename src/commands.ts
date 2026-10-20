@@ -1,10 +1,11 @@
 import { riskLimits, type Env } from "./env";
-import { closeAll, connectWalt, currentPrice, paperEquity } from "./bot";
+import { closeAll, paperEquity } from "./bot";
+import { configureGrid, resumeGrid, runGrid, setMode, stopGrid, walt } from "./service";
 import { callbackParams, disconnect, getAccessToken, handleCallback, startAuthorization } from "./oauth";
-import { cachedContracts, defaultState, loadState, saveState, saveTools } from "./state";
-import { notional, sizeError, step, stopLossPrice, validateConfig, type GridConfig } from "./strategy/grid";
-import { COMMANDS, notifyOwner } from "./telegram";
-import { findContract, previewReason, type Walt } from "./walt";
+import { defaultState, loadState, saveState, saveTools } from "./state";
+import { notional, step } from "./strategy/grid";
+import { COMMANDS, notifyOwner, send, type TgUpdate } from "./telegram";
+import { previewReason } from "./walt";
 
 /** Processa um comando do dono e devolve a resposta em texto. */
 export async function handleCommand(env: Env, text: string): Promise<string> {
@@ -43,31 +44,22 @@ export async function handleCommand(env: Env, text: string): Promise<string> {
     case "call":
       return call(env, args);
     case "grid":
-      return grid(env, args);
+      return configureGrid(env, args);
     case "run":
-      return run(env);
-    case "stop": {
-      const s = await loadState(env);
-      s.running = false;
-      await saveState(env, s);
-      return "Grid parado. A posição aberta (se houver) continua com TP/SL no Walt. /closeall para fechar.";
-    }
+      return runGrid(env);
+    case "stop":
+      return stopGrid(env);
     case "closeall":
       return closeAll(env);
     case "mode":
-      return mode(env, args);
+      return setMode(env, args);
     case "risk":
       return risk(env);
     case "testalert":
       await notifyOwner(env, ["🔔 Teste de alerta do walletbot-mcp."]);
       return env.ALERT_CHAT_ID ? `Alerta de teste enviado para ${env.ALERT_CHAT_ID}.` : "Alerta de teste enviado (sem ALERT_CHAT_ID: vai para você).";
-    case "resume": {
-      const s = await loadState(env);
-      s.paused = undefined;
-      s.day = undefined; // recomeça a contagem de perda diária
-      await saveState(env, s);
-      return "Pausa removida. O próximo tick roda normalmente.";
-    }
+    case "resume":
+      return resumeGrid(env);
     case "paper":
       return paperCmd(env, args);
     default:
@@ -89,11 +81,6 @@ function help(): string {
   ].join("\n");
 }
 
-async function walt(env: Env): Promise<Walt> {
-  const w = await connectWalt(env);
-  if (!w) throw new Error("Walt não conectado — use /connect");
-  return w;
-}
 
 async function status(env: Env): Promise<string> {
   const s = await loadState(env);
@@ -169,88 +156,8 @@ async function call(env: Env, args: string[]): Promise<string> {
   return `✅ ${tool}\n${typeof data === "string" ? data : JSON.stringify(data, null, 1)}`;
 }
 
-async function grid(env: Env, args: string[]): Promise<string> {
-  const limits = riskLimits(env);
-  const market = (args[0] ?? limits.allowedMarkets[0]).toUpperCase();
-  if (!limits.allowedMarkets.includes(market)) return `Mercado fora da whitelist: ${limits.allowedMarkets.join(", ")}`;
-  const w = await walt(env);
-  const contract = findContract(await cachedContracts(env, () => w.contracts()), market);
-  if (!contract) return `Contrato ${market}-USDC não encontrado no Walt.`;
-  if (args.length < 5) {
-    // sugestão pronta para copiar: faixa de −6% a +2% do preço atual
-    const price = await w.rate(contract);
-    const d = contract.priceDecimals;
-    const lo = (price * 0.94).toFixed(d);
-    const hi = (price * 1.02).toFixed(d);
-    return [
-      `Preço atual de ${market}: $${price}`,
-      "",
-      "Uso: /grid <mercado> <low> <high> <degraus> <margemUSD por trade> [alavancagem]",
-      "Sugestão (faixa −6% a +2%, 8 degraus, $5 de margem, 3x) — copie e envie:",
-      `/grid ${market} ${lo} ${hi} 8 5 3`,
-    ].join("\n");
-  }
-  const cfg: GridConfig = {
-    market,
-    contract,
-    low: Number(args[1]),
-    high: Number(args[2]),
-    levels: Number(args[3]),
-    marginUsd: Number(args[4]),
-    leverage: Math.min(Math.trunc(Number(args[5] ?? 1)), limits.maxLeverage),
-  };
-  const err = validateConfig(cfg);
-  if (err) return `Config inválida: ${err}`;
-  const s = await loadState(env);
-  if (s.grid?.position) return "Há uma posição aberta no grid atual. Use /closeall antes de reconfigurar.";
-  const price = await w.rate(contract);
-  const sizeErr = sizeError(cfg, Math.min(price, cfg.high));
-  if (sizeErr) return `Config inválida: ${sizeErr}`;
-  s.grid = { cfg };
-  s.running = false;
-  await saveState(env, s);
-  return [
-    `Grid ${market} (contrato #${contract.contractId}) configurado:`,
-    `• ${cfg.levels} degraus de $${step(cfg).toFixed(contract.priceDecimals)} entre $${cfg.low} e $${cfg.high} (preço atual $${price})`,
-    `• Cada entrada: margem $${cfg.marginUsd} ${cfg.leverage}x ≈ $${notional(cfg).toFixed(2)} nocional, TP no degrau de cima`,
-    `• Stop-loss: $${stopLossPrice(cfg, limits.stopLossPct).toFixed(contract.priceDecimals)} (para o grid)`,
-    `Use /run para iniciar (modo ${s.mode}).`,
-  ].join("\n");
-}
 
-async function run(env: Env): Promise<string> {
-  const s = await loadState(env);
-  if (!s.grid) return "Configure antes com /grid.";
-  const price = await currentPrice(s.grid.cfg, await connectWalt(env));
-  const { low, high } = s.grid.cfg;
-  const warn =
-    price > high || price < low ? `\n⚠️ Preço fora da faixa $${low}–$${high}: só entra quando o preço chegar nela.` : "";
-  s.running = true;
-  s.paused = undefined;
-  s.lastPrice = price;
-  await saveState(env, s);
-  return `▶️ Grid ${s.grid.cfg.market} iniciado em modo ${s.mode.toUpperCase()} (preço $${price}). Ticks a cada 5 min.${warn}`;
-}
 
-async function mode(env: Env, args: string[]): Promise<string> {
-  const s = await loadState(env);
-  const target = args[0]?.toLowerCase();
-  if (target !== "paper" && target !== "live") return `Modo atual: ${s.mode}. Uso: /mode paper | /mode live CONFIRMO`;
-  if (s.grid?.position) return "Feche a posição (/closeall) antes de trocar de modo.";
-  if (target === "live") {
-    if (args[1] !== "CONFIRMO") return "⚠️ Live usa dinheiro real em perpétuos alavancados. Envie: /mode live CONFIRMO";
-    const w = await walt(env);
-    const r = await w.readiness();
-    if (!r.ok) return `Conta Perps não está pronta: ${r.issues.map((i) => i.code).join(", ")} — use /conta.`;
-    const bal = await w.balanceUsd();
-    if (!(bal > 0)) return "Saldo USDC zero na conta do agente — deposite no Walt antes.";
-  }
-  s.mode = target;
-  s.running = false;
-  s.day = undefined;
-  await saveState(env, s);
-  return `Modo ${target.toUpperCase()} ativado. Grid parado — use /run.`;
-}
 
 function risk(env: Env): string {
   const l = riskLimits(env);
@@ -275,4 +182,23 @@ async function paperCmd(env: Env, args: string[]): Promise<string> {
   if (s.grid) fresh.grid = { cfg: s.grid.cfg };
   await saveState(env, fresh);
   return `Carteira paper reiniciada com $${cash}.`;
+}
+
+/** Processa um update do Telegram (webhook direto ou encaminhado pelo tgcloud). */
+export async function handleUpdate(env: Env, update: TgUpdate): Promise<void> {
+  const msg = update.message;
+  if (!msg?.text) return;
+  const chatId = String(msg.chat.id);
+  if (!env.OWNER_CHAT_ID) {
+    await send(env, chatId, `Seu chat id é ${chatId}. Configure o secret OWNER_CHAT_ID com esse valor.`);
+    return;
+  }
+  if (chatId !== env.OWNER_CHAT_ID) return; // só o dono controla o bot
+  let reply: string;
+  try {
+    reply = await handleCommand(env, msg.text);
+  } catch (e) {
+    reply = `❌ ${(e as Error).message}`;
+  }
+  await send(env, chatId, reply);
 }

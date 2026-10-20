@@ -13,12 +13,14 @@ export interface BotState {
   lastTick?: string;
   lastError?: string;
   lastBlock?: string; // último bloqueio de risco (evita repetir a notificação)
+  // histórico curto para o gráfico/curva — fica no próprio estado para gastar uma escrita de KV por tick
+  prices?: { market: string; points: Array<[number, number]> };
+  equity?: Array<[number, number]>;
 }
 
 const K_STATE = "bot:state";
 const K_TOOLS = "walt:tools";
-const K_CONTRACTS = "walt:contracts";
-const K_LOCK = "bot:lock";
+const K_CONTRACTS = "walt:contracts:v2"; // v2: inclui volume e funding
 
 export function defaultState(): BotState {
   return {
@@ -59,13 +61,3 @@ export async function cachedContracts(env: Env, fetcher: () => Promise<ContractI
   return fresh;
 }
 
-/** Lock best-effort (KV é eventualmente consistente; o cron de 5 min dá folga). */
-export async function acquireLock(env: Env): Promise<boolean> {
-  if (await env.STATE.get(K_LOCK)) return false;
-  await env.STATE.put(K_LOCK, new Date().toISOString(), { expirationTtl: 240 });
-  return true;
-}
-
-export async function releaseLock(env: Env): Promise<void> {
-  await env.STATE.delete(K_LOCK);
-}
