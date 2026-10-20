@@ -3,7 +3,7 @@ import { closeAll, connectWalt, currentPrice, paperEquity } from "./bot";
 import { callbackParams, disconnect, getAccessToken, handleCallback, startAuthorization } from "./oauth";
 import { cachedContracts, defaultState, loadState, saveState, saveTools } from "./state";
 import { notional, sizeError, step, stopLossPrice, validateConfig, type GridConfig } from "./strategy/grid";
-import { COMMANDS } from "./telegram";
+import { COMMANDS, notifyOwner } from "./telegram";
 import { findContract, previewReason, type Walt } from "./walt";
 
 /** Processa um comando do dono e devolve a resposta em texto. */
@@ -58,6 +58,9 @@ export async function handleCommand(env: Env, text: string): Promise<string> {
       return mode(env, args);
     case "risk":
       return risk(env);
+    case "testalert":
+      await notifyOwner(env, ["🔔 Teste de alerta do walletbot-mcp."]);
+      return env.ALERT_CHAT_ID ? `Alerta de teste enviado para ${env.ALERT_CHAT_ID}.` : "Alerta de teste enviado (sem ALERT_CHAT_ID: vai para você).";
     case "resume": {
       const s = await loadState(env);
       s.paused = undefined;
@@ -80,6 +83,7 @@ function help(): string {
     "/call <tool> [json] — chamar uma tool do Walt diretamente",
     "/paper reset [saldo] — reiniciar a carteira simulada",
     "/disconnect — remover tokens do Walt",
+    "/testalert — testar o envio de alertas para o canal",
     "",
     "Fluxo: /connect → /conta → /grid … → /run (paper) → depositar USDC → /mode live CONFIRMO",
   ].join("\n");

@@ -20,9 +20,21 @@ export async function send(env: Env, chatId: string | number, text: string): Pro
   }
 }
 
+/** Alertas automáticos: vão para ALERT_CHAT_ID (canal) se configurado; se o envio falhar, caem no dono. */
 export async function notifyOwner(env: Env, msgs: string[]): Promise<void> {
-  if (!env.OWNER_CHAT_ID || msgs.length === 0) return;
-  await send(env, env.OWNER_CHAT_ID, msgs.join("\n"));
+  if (msgs.length === 0) return;
+  const text = msgs.join("\n");
+  if (env.ALERT_CHAT_ID) {
+    const res = (await tg(env, "sendMessage", { chat_id: env.ALERT_CHAT_ID, text, disable_web_page_preview: true })) as {
+      ok?: boolean;
+      description?: string;
+    };
+    if (res.ok) return;
+    if (env.OWNER_CHAT_ID)
+      await send(env, env.OWNER_CHAT_ID, `⚠️ Não consegui postar no canal ${env.ALERT_CHAT_ID} (${res.description ?? "erro"}). Alerta:\n${text}`);
+    return;
+  }
+  if (env.OWNER_CHAT_ID) await send(env, env.OWNER_CHAT_ID, text);
 }
 
 export const COMMANDS: Array<[string, string]> = [
