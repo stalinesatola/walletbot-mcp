@@ -166,14 +166,26 @@ async function call(env: Env, args: string[]): Promise<string> {
 }
 
 async function grid(env: Env, args: string[]): Promise<string> {
-  if (args.length < 5)
-    return "Uso: /grid <mercado> <low> <high> <degraus> <margemUSD por trade> [alavancagem]\nEx.: /grid BTC 100000 110000 10 5 3";
   const limits = riskLimits(env);
-  const market = args[0].toUpperCase();
+  const market = (args[0] ?? limits.allowedMarkets[0]).toUpperCase();
   if (!limits.allowedMarkets.includes(market)) return `Mercado fora da whitelist: ${limits.allowedMarkets.join(", ")}`;
   const w = await walt(env);
   const contract = findContract(await cachedContracts(env, () => w.contracts()), market);
   if (!contract) return `Contrato ${market}-USDC não encontrado no Walt.`;
+  if (args.length < 5) {
+    // sugestão pronta para copiar: faixa de −6% a +2% do preço atual
+    const price = await w.rate(contract);
+    const d = contract.priceDecimals;
+    const lo = (price * 0.94).toFixed(d);
+    const hi = (price * 1.02).toFixed(d);
+    return [
+      `Preço atual de ${market}: $${price}`,
+      "",
+      "Uso: /grid <mercado> <low> <high> <degraus> <margemUSD por trade> [alavancagem]",
+      "Sugestão (faixa −6% a +2%, 8 degraus, $5 de margem, 3x) — copie e envie:",
+      `/grid ${market} ${lo} ${hi} 8 5 3`,
+    ].join("\n");
+  }
   const cfg: GridConfig = {
     market,
     contract,
