@@ -23,6 +23,8 @@ jobs:
     needs: test
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    # os secrets estão no environment "TELEGRAM_BOT_TOKEN" (Settings → Environments)
+    environment: TELEGRAM_BOT_TOKEN
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
