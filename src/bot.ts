@@ -1,38 +1,31 @@
-// Tick do grid: preço → ações do grid → travas de risco → execução (paper ou live).
+// Tick: preço → posição atual → (fechou por TP/SL?) → entrada no degrau → travas de risco → ordem.
 import { riskLimits, type Env } from "./env";
 import { McpClient } from "./mcp";
 import { getAccessToken } from "./oauth";
-import { PaperExecutor, type Executor } from "./paper";
 import { publicMid } from "./prices";
 import { checkOpen, dailyLossExceeded } from "./risk";
-import { gridExposure, loadMap, loadState, saveState, type BotState } from "./state";
-import { computeActions } from "./strategy/grid";
+import { loadState, saveState, type BotState } from "./state";
+import { exitHit, planEntry, type GridConfig, type GridPosition } from "./strategy/grid";
 import { Walt } from "./walt";
-
-class LiveExecutor implements Executor {
-  constructor(
-    private walt: Walt,
-    private market: string,
-  ) {}
-  equity() {
-    return this.walt.equity(this.market);
-  }
-  buy(sizeUsd: number, leverage: number, price: number) {
-    return this.walt.openLong(this.market, sizeUsd, leverage, price);
-  }
-  sell(qty: number, price: number) {
-    return this.walt.reduce(this.market, qty, price);
-  }
-}
 
 export async function connectWalt(env: Env): Promise<Walt | null> {
   const token = await getAccessToken(env);
-  if (!token) return null;
-  return new Walt(new McpClient(env.WALT_MCP_URL, token), await loadMap(env));
+  return token ? new Walt(new McpClient(env.WALT_MCP_URL, token)) : null;
 }
 
-export async function currentPrice(env: Env, market: string, walt: Walt | null): Promise<number> {
-  return walt?.has("price") ? walt.price(market) : publicMid(market);
+export async function currentPrice(cfg: GridConfig, walt: Walt | null): Promise<number> {
+  return walt ? walt.rate(cfg.contract) : publicMid(cfg.market);
+}
+
+/** PnL de uma posição do grid saindo a `exit` (inclui taxa taker na saída; a da entrada já saiu da margem). */
+export function positionPnl(pos: GridPosition, exit: number, takerFeePct: number): number {
+  return pos.qty * (exit - pos.entryPrice) - pos.qty * exit * takerFeePct;
+}
+
+export function paperEquity(state: BotState, price: number): number {
+  const pos = state.grid?.position;
+  const fee = state.grid?.cfg.contract.takerFeePct ?? 0;
+  return state.paper.cash + (pos ? positionPnl(pos, price, fee) : 0);
 }
 
 /** Executa um tick e devolve as mensagens a enviar ao dono. */
@@ -53,106 +46,124 @@ export async function tick(env: Env): Promise<string[]> {
   return msgs;
 }
 
+function recordClose(state: BotState, pnl: number): void {
+  state.stats.trades++;
+  state.stats.realizedPnl += pnl;
+  if (pnl >= 0) state.stats.wins++;
+  else state.stats.losses++;
+}
+
 async function runTick(env: Env, state: BotState, msgs: string[]): Promise<void> {
   const grid = state.grid!;
-  const { cfg, levels } = grid;
+  const { cfg } = grid;
   const limits = riskLimits(env);
   const walt = await connectWalt(env);
-
-  let executor: Executor;
-  let paper: PaperExecutor | undefined;
-  if (state.mode === "live") {
-    const map = await loadMap(env);
-    if (!walt || !map.confirmed || !walt.has("open") || !walt.has("close") || !walt.has("account")) {
-      state.paused = "modo live sem conexão Walt ou sem mapeamento confirmado (/connect, /tools, /map confirm)";
-      msgs.push(`⏸️ Pausado: ${state.paused}`);
-      return;
-    }
-    executor = new LiveExecutor(walt, cfg.market);
-  } else {
-    executor = paper = new PaperExecutor(state);
-  }
-
-  const price = await currentPrice(env, cfg.market, walt);
-  state.lastPrice = price;
-  const equity = await executor.equity(price);
-
-  const today = new Date().toISOString().slice(0, 10);
-  if (state.day?.date !== today) state.day = { date: today, startEquity: equity };
-  const ctx = () => ({
-    equityUsd: equity,
-    openMarginUsd: gridExposure(levels, price, cfg.leverage).margin,
-    dayStartEquityUsd: state.day!.startEquity,
-  });
-
-  if (dailyLossExceeded(ctx(), limits)) {
-    state.paused = `perda diária >= ${limits.maxDailyLossPct}% (patrimônio $${equity.toFixed(2)} vs $${state.day.startEquity.toFixed(2)} no início do dia). Use /resume`;
-    msgs.push(`🛑 Pausado: ${state.paused}`);
+  const live = state.mode === "live";
+  if (live && !walt) {
+    state.paused = "modo live sem conexão com o Walt (/connect)";
+    msgs.push(`⏸️ Pausado: ${state.paused}`);
     return;
   }
 
-  for (const action of computeActions(cfg, levels, price, limits.stopLossPct)) {
-    if (action.type === "stopLoss") {
-      let pnl = 0;
-      for (const l of levels) pnl += await closeLevel(executor, paper, state, l, price);
+  const price = await currentPrice(cfg, walt);
+  state.lastPrice = price;
+
+  // 1) a posição do grid ainda está aberta?
+  if (grid.position) {
+    const pos = grid.position;
+    let closedBy: "tp" | "sl" | null = null;
+    if (live) {
+      // a abertura é assíncrona no Walt: espera 2 min antes de concluir que a posição sumiu
+      const recent = Date.now() - Date.parse(pos.openedAt) < 120_000;
+      if (!recent && !(await walt!.openPosition(cfg.contract.contractId)))
+        closedBy = price >= (pos.takeProfit + pos.stopLoss) / 2 ? "tp" : "sl";
+    } else {
+      closedBy = exitHit(pos, price);
+    }
+    if (!closedBy) return; // posição aberta: TP/SL cuidam da saída
+    const exit = closedBy === "tp" ? pos.takeProfit : pos.stopLoss;
+    const pnl = positionPnl(pos, exit, cfg.contract.takerFeePct);
+    if (!live) state.paper.cash += pnl;
+    recordClose(state, pnl);
+    grid.position = undefined;
+    if (closedBy === "tp") {
+      msgs.push(`🟢 Take-profit ${cfg.market} nível ${pos.level + 1}: saída ~$${exit} (PnL ~$${pnl.toFixed(2)})`);
+    } else {
       state.running = false;
-      msgs.push(`🛑 Stop-loss ${cfg.market} a $${price}: posições fechadas, PnL $${pnl.toFixed(2)}. Grid parado.`);
+      msgs.push(`🛑 Stop-loss ${cfg.market}: saída ~$${exit} (PnL ~$${pnl.toFixed(2)}). Grid parado — /run para reiniciar.`);
       return;
     }
-    if (action.type === "sell") {
-      const l = levels[action.level];
-      const pnl = await closeLevel(executor, paper, state, l, price);
-      msgs.push(`🟢 Venda nível ${action.level + 1} ${cfg.market} a $${price} (PnL $${pnl.toFixed(2)})`);
-      continue;
-    }
-    const decision = checkOpen(cfg.market, action.sizeUsd, cfg.leverage, ctx(), limits);
-    if (!decision.ok) {
-      const err = `compra bloqueada pelo risco: ${decision.reason}`;
-      if (err !== state.lastBlock) msgs.push(`🚫 ${err}`);
-      state.lastBlock = err;
-      continue;
-    }
-    state.lastBlock = undefined;
-    const fill = await executor.buy(decision.sizeUsd, decision.leverage, price);
-    levels[action.level].qty = fill.qty;
-    levels[action.level].entryPrice = fill.price;
-    state.stats.buys++;
-    msgs.push(`🔵 Compra nível ${action.level + 1} ${cfg.market}: $${decision.sizeUsd.toFixed(2)} a $${fill.price} (${decision.leverage}x)`);
+  } else if (live && (await walt!.openPosition(cfg.contract.contractId))) {
+    const block = `já existe uma posição ${cfg.market} na conta que não foi aberta pelo grid — feche-a ou use /closeall`;
+    if (block !== state.lastBlock) msgs.push(`🚫 ${block}`);
+    state.lastBlock = block;
+    return;
   }
+
+  // 2) entrada no degrau
+  const plan = planEntry(cfg, price, limits.stopLossPct);
+  if (!plan) return;
+
+  const equity = live ? await walt!.balanceUsd() : paperEquity(state, price);
+  const today = new Date().toISOString().slice(0, 10);
+  if (state.day?.date !== today) state.day = { date: today, startEquity: equity };
+  const ctx = { equityUsd: equity, openMarginUsd: 0, dayStartEquityUsd: state.day.startEquity };
+  if (dailyLossExceeded(ctx, limits)) {
+    state.paused = `perda diária >= ${limits.maxDailyLossPct}% ($${equity.toFixed(2)} vs $${state.day.startEquity.toFixed(2)}). Use /resume`;
+    msgs.push(`🛑 Pausado: ${state.paused}`);
+    return;
+  }
+  const decision = checkOpen(cfg.market, cfg.marginUsd, cfg.leverage, ctx, limits);
+  if (!decision.ok) {
+    const block = `entrada bloqueada pelo risco: ${decision.reason}`;
+    if (block !== state.lastBlock) msgs.push(`🚫 ${block}`);
+    state.lastBlock = block;
+    return;
+  }
+
+  if (live) {
+    try {
+      await walt!.openLong(cfg.contract, cfg.marginUsd, cfg.leverage, price, plan.takeProfit, plan.stopLoss);
+    } catch (e) {
+      // não repetir: o guia do Walt avisa que retry cego pode abrir duas vezes
+      state.paused = `falha ao abrir ordem (${(e as Error).message}). Confira /status e o app Walt, depois /resume`;
+      msgs.push(`⏸️ Pausado: ${state.paused}`);
+      return;
+    }
+  } else {
+    state.paper.cash -= plan.qty * price * cfg.contract.takerFeePct;
+  }
+  grid.position = plan;
+  state.lastBlock = undefined;
+  msgs.push(
+    `🔵 Long ${cfg.market} nível ${plan.level + 1} a ~$${price}: margem $${cfg.marginUsd} ${cfg.leverage}x | TP $${plan.takeProfit} | SL $${plan.stopLoss}${live ? "" : " (paper)"}`,
+  );
 }
 
-async function closeLevel(
-  executor: Executor,
-  paper: PaperExecutor | undefined,
-  state: BotState,
-  level: { qty?: number; entryPrice?: number },
-  price: number,
-): Promise<number> {
-  if (!level.qty || !level.entryPrice) return 0;
-  const fill = await executor.sell(level.qty, price);
-  const pnl = paper ? paper.settle(level.qty, level.entryPrice, fill.price) : level.qty * (fill.price - level.entryPrice);
-  state.stats.sells++;
-  state.stats.realizedPnl += pnl;
-  level.qty = undefined;
-  level.entryPrice = undefined;
-  return pnl;
-}
-
-/** Fecha todas as posições do grid (comando /closeall). */
+/** Fecha a posição do grid e para (comando /closeall). */
 export async function closeAll(env: Env): Promise<string> {
   const state = await loadState(env);
   if (!state.grid) return "Nenhum grid configurado.";
+  const { cfg } = state.grid;
   const walt = await connectWalt(env);
-  const price = await currentPrice(env, state.grid.cfg.market, walt);
-  let executor: Executor;
-  let paper: PaperExecutor | undefined;
-  if (state.mode === "live") {
-    if (!walt) return "Walt não conectado — feche as posições pelo app Walt.";
-    executor = new LiveExecutor(walt, state.grid.cfg.market);
-  } else executor = paper = new PaperExecutor(state);
-  let pnl = 0;
-  for (const l of state.grid.levels) pnl += await closeLevel(executor, paper, state, l, price);
   state.running = false;
+  if (state.mode === "live") {
+    if (!walt) return "Walt não conectado — feche a posição pelo app Walt.";
+    if (await walt.openPosition(cfg.contract.contractId)) await walt.closePosition(cfg.contract.contractId);
+    state.grid.position = undefined;
+    await saveState(env, state);
+    return `Ordem de fechamento enviada para ${cfg.market}. Grid parado. Confira com /status.`;
+  }
+  const pos = state.grid.position;
+  let msg = "Sem posição aberta. Grid parado.";
+  if (pos) {
+    const price = await currentPrice(cfg, walt);
+    const pnl = positionPnl(pos, price, cfg.contract.takerFeePct);
+    state.paper.cash += pnl;
+    recordClose(state, pnl);
+    state.grid.position = undefined;
+    msg = `Posição paper fechada a $${price} (PnL $${pnl.toFixed(2)}). Grid parado.`;
+  }
   await saveState(env, state);
-  return `Posições fechadas a $${price}. PnL $${pnl.toFixed(2)}. Grid parado.`;
+  return msg;
 }

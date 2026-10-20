@@ -1,50 +1,63 @@
 import { describe, expect, it } from "vitest";
-import { buildLevels, computeActions, validateConfig, type GridConfig } from "../src/strategy/grid";
+import {
+  baseSize,
+  entryLevel,
+  exitHit,
+  notional,
+  planEntry,
+  sizeError,
+  validateConfig,
+  type GridConfig,
+} from "../src/strategy/grid";
 
-const cfg: GridConfig = { market: "BTC", low: 60000, high: 70000, levels: 10, capitalUsd: 100, leverage: 2 };
+// valores do contrato BTC-USDC do perps_list_contracts
+const btc = {
+  contractId: 1,
+  name: "BTC-USDC",
+  priceDecimals: 1,
+  minSizeBase: 0.00007,
+  minSizeQuote: 1,
+  maxSizeQuote: 25000,
+  maxLeverage: 50,
+  takerFeePct: 0.0009,
+  priceSlippage: 0.01,
+};
+const cfg: GridConfig = { market: "BTC", contract: btc, low: 100000, high: 110000, levels: 10, marginUsd: 5, leverage: 3 };
 
-describe("grid", () => {
-  it("constrói níveis igualmente espaçados", () => {
-    const levels = buildLevels(cfg);
-    expect(levels).toHaveLength(10);
-    expect(levels[0]).toEqual({ buyPrice: 60000, sellPrice: 61000 });
-    expect(levels[9]).toEqual({ buyPrice: 69000, sellPrice: 70000 });
-  });
-
-  it("valida a configuração", () => {
+describe("grid de posição única", () => {
+  it("valida a configuração contra o contrato", () => {
     expect(validateConfig(cfg)).toBeNull();
-    expect(validateConfig({ ...cfg, high: 50000 })).toMatch(/faixa/);
-    expect(validateConfig({ ...cfg, levels: 1 })).toMatch(/níveis/);
+    expect(validateConfig({ ...cfg, high: 90000 })).toMatch(/faixa/);
+    expect(validateConfig({ ...cfg, leverage: 2.5 })).toMatch(/inteiro/);
+    expect(validateConfig({ ...cfg, leverage: 60 })).toMatch(/máx do contrato/);
+    expect(validateConfig({ ...cfg, marginUsd: 0.5 })).toMatch(/mínima/);
   });
 
-  it("compra só o nível cuja faixa contém o preço", () => {
-    const actions = computeActions(cfg, buildLevels(cfg), 64500, 5);
-    expect(actions).toEqual([{ type: "buy", level: 5, price: 64500, sizeUsd: 10 }]);
+  it("acha o degrau cuja faixa contém o preço", () => {
+    expect(entryLevel(cfg, 104500)).toBe(5); // (104000, 105000]
+    expect(entryLevel(cfg, 100000)).toBe(0);
+    expect(entryLevel(cfg, 99500)).toBe(0);
+    expect(entryLevel(cfg, 98000)).toBeNull();
+    expect(entryLevel(cfg, 110500)).toBeNull();
   });
 
-  it("não sobe comprando níveis acima do preço em ticks seguidos", () => {
-    const levels = buildLevels(cfg);
-    levels[5] = { ...levels[5], qty: 0.0001, entryPrice: 64500 };
-    expect(computeActions(cfg, levels, 64500, 5)).toEqual([]);
+  it("planeja TP no degrau de cima e SL abaixo da faixa, arredondados ao tick", () => {
+    const p = planEntry(cfg, 104500, 5)!;
+    expect(p.level).toBe(5);
+    expect(p.takeProfit).toBe(106000);
+    expect(p.stopLoss).toBe(95000);
+    expect(exitHit(p, 106000)).toBe("tp");
+    expect(exitHit(p, 95000)).toBe("sl");
+    expect(exitHit(p, 104000)).toBeNull();
   });
 
-  it("não compra acima da faixa", () => {
-    expect(computeActions(cfg, buildLevels(cfg), 71000, 5)).toEqual([]);
+  it("calcula nocional como o Walt (amount ÷ (1/alav + taxa))", () => {
+    expect(notional(cfg)).toBeCloseTo(5 / (1 / 3 + 0.0009), 6);
+    expect(baseSize(cfg, 100000)).toBeCloseTo(notional(cfg) / 101000, 10);
   });
 
-  it("vende nível cheio quando atinge o alvo e não recompra o mesmo nível", () => {
-    const levels = buildLevels(cfg);
-    levels[4] = { ...levels[4], qty: 0.001, entryPrice: 64000 };
-    const actions = computeActions(cfg, levels, 65100, 5);
-    expect(actions[0]).toEqual({ type: "sell", level: 4, price: 65100, qty: 0.001 });
-    expect(actions.find((a) => a.type === "buy" && a.level === 4)).toBeUndefined();
-  });
-
-  it("dispara stop-loss abaixo de low - stop%", () => {
-    const levels = buildLevels(cfg);
-    levels[0] = { ...levels[0], qty: 0.001, entryPrice: 60000 };
-    expect(computeActions(cfg, levels, 56900, 5)).toEqual([{ type: "stopLoss", price: 56900 }]);
-    // sem posições, nada a fazer
-    expect(computeActions(cfg, buildLevels(cfg), 56900, 5)).toEqual([]);
+  it("rejeita tamanho abaixo do mínimo do contrato", () => {
+    expect(sizeError(cfg, 105000)).toBeNull(); // ~0.00014 BTC
+    expect(sizeError({ ...cfg, marginUsd: 1, leverage: 1 }, 105000)).toMatch(/mínimo/);
   });
 });
