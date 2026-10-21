@@ -25,7 +25,7 @@ ALLOWED_MARKETS = "*"
 MIN_VOLUME_24H_USD = "1000000"
 # URL da Mini App no Telegram Serverless (https://app<id>.tgcloud.ai/), impressa pelo `npx tgcloud push`.
 # Com ela preenchida, /setup cria o botão de menu e NÃO mexe no webhook (que é do tgcloud).
-MINIAPP_URL = ""
+MINIAPP_URL = "https://app8936339348.tgcloud.ai/"
 # Canal/grupo que recebe os alertas automáticos (o bot precisa ser admin com permissão de postar).
 # Vazio = alertas vão para OWNER_CHAT_ID.
 ALERT_CHAT_ID = "-1002200192005"

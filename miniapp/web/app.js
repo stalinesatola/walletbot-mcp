@@ -16,7 +16,7 @@ function call(name, input = {}) {
 
 function showError(err) {
   const msg = err?.message || String(err);
-  $('#alert').textContent = `⚠️ ${msg}`;
+  $('#alert').innerHTML = `<div class="note">${icon('alert')}<span>${esc(msg)}</span></div>`;
   $('#alert').classList.remove('hidden');
 }
 
@@ -53,8 +53,13 @@ function renderState() {
   $('#run').className = `pill ${s.running && !s.paused ? 'on' : ''}`;
   $('#price').textContent = s.grid ? `${s.grid.market} ${usd(s.lastPrice, 2)}` : '—';
 
-  const notes = [s.paused && `⏸️ ${s.paused}`, s.lastBlock && `🚫 ${s.lastBlock}`, s.lastError && `⚠️ ${s.lastError}`, !s.connected && '🔌 Walt não conectado (/connect no bot)'].filter(Boolean);
-  $('#alert').innerHTML = notes.map(esc).join('<br>');
+  const notes = [
+    s.paused && ['pause', s.paused],
+    s.lastBlock && ['ban', s.lastBlock],
+    s.lastError && ['alert', s.lastError],
+    !s.connected && ['plug', 'Walt não conectado (/connect no bot)'],
+  ].filter(Boolean);
+  $('#alert').innerHTML = notes.map(([ic, t]) => `<div class="note">${icon(ic)}<span>${esc(t)}</span></div>`).join('');
   $('#alert').classList.toggle('hidden', !notes.length);
 
   const g = s.grid;
@@ -163,7 +168,7 @@ function renderPairs() {
         (c) => `<div class="item ${c.allowed ? '' : 'blocked'}" data-market="${esc(c.market)}">
       <div><div class="name">${esc(c.market)}</div>
       <div class="meta">vol 24h ${usd(c.volume24hUsd, 0)} · funding ${fmt((c.fundingRateHourly ?? 0) * 100, 4)}%/h · até ${c.maxLeverage}x</div></div>
-      <div class="tag">${c.allowed ? '›' : c.liquid ? 'bloqueado' : 'pouca liquidez'}</div></div>`,
+      <div class="tag">${c.allowed ? icon('chevron') : c.liquid ? 'bloqueado' : 'pouca liquidez'}</div></div>`,
       )
       .join('') || '<div class="card">Nenhum par encontrado.</div>';
 }
@@ -185,7 +190,7 @@ $('#pairs').addEventListener('click', async (ev) => {
       <div class="row"><span>Margem mínima a ${p.leverage}x</span><b>${usd(p.minMargin)}</b></div>
       <div class="row"><span>Faixa sugerida (−6% / +2%)</span><b>${usd(p.suggestion.low, 6)} – ${usd(p.suggestion.high, 6)}</b></div>
       <div class="row"><span>Taxa taker</span><b>${fmt((c?.takerFeePct ?? 0) * 100, 3)}%</b></div>
-      ${c?.allowed ? '<button id="use-pair">Usar no grid</button>' : '<p class="meta">Par fora dos critérios de liquidez/whitelist do bot.</p>'}`;
+      ${c?.allowed ? `<button id="use-pair">${icon('sliders')}Usar no grid</button>` : '<p class="meta">Par fora dos critérios de liquidez/whitelist do bot.</p>'}`;
     const btn = $('#use-pair');
     if (btn)
       btn.onclick = () => {
@@ -211,7 +216,14 @@ async function loadHistory() {
       ? `<table><tr><th>Quando</th><th>Evento</th><th>Preço</th><th>PnL</th></tr>${h.trades
           .map((t) => {
             const when = new Date(t.at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-            const ev = t.event === 'open' ? `🔵 long ${esc(t.market)}` : t.reason === 'tp' ? '🟢 TP' : t.reason === 'sl' ? '🛑 SL' : '✋ manual';
+            const ev =
+              t.event === 'open'
+                ? `<span class="ev ev-open">${icon('open')}long ${esc(t.market)}</span>`
+                : t.reason === 'tp'
+                  ? `<span class="ev up">${icon('tp')}TP</span>`
+                  : t.reason === 'sl'
+                    ? `<span class="ev down">${icon('sl')}SL</span>`
+                    : `<span class="ev">${icon('hand')}manual</span>`;
             const pnl = t.pnl === undefined ? '' : `<span class="${t.pnl >= 0 ? 'up' : 'down'}">${usd(t.pnl, 4)}</span>`;
             return `<tr><td>${when}${t.mode === 'paper' ? ' <small>(paper)</small>' : ''}</td><td>${ev}</td><td>${usd(t.price)}</td><td>${pnl}</td></tr>`;
           })
@@ -242,9 +254,9 @@ function drawEquity(points) {
 }
 
 // ---------- controles ----------
-function ctrlMessage(text) {
+function ctrlMessage(text, ic = 'save') {
   const box = $('#ctrl-msg');
-  box.textContent = text;
+  box.innerHTML = `<div class="note">${icon(ic)}<span>${esc(text)}</span></div>`;
   box.classList.remove('hidden');
 }
 
@@ -268,7 +280,7 @@ $('#grid-form').addEventListener('submit', async (ev) => {
     ctrlMessage(r.message);
     loadState();
   } catch (e) {
-    ctrlMessage(`❌ ${e.message}`);
+    ctrlMessage(e.message, 'error');
   }
 });
 
@@ -290,7 +302,7 @@ document.querySelectorAll('[data-action]').forEach((b) =>
       ctrlMessage(r.message);
       loadState();
     } catch (e) {
-      ctrlMessage(`❌ ${e.message}`);
+      ctrlMessage(e.message, 'error');
     }
   }),
 );
