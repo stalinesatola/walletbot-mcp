@@ -73,7 +73,7 @@ banco do tgcloud e apaga a mensagem. Só esse user id abre os endpoints da Mini 
    `/setup?secret=<TELEGRAM_WEBHOOK_SECRET>`: cria o botão de menu **Painel** sem mexer no webhook.
 4. No chat do bot: `/link <API_SECRET>`. O bot apaga a mensagem e responde "✅ Vinculado ao Worker".
 
-**Status deste bot:** ativado. Mini App em `https://app8936339348.tgcloud.ai/`; o `/setup` respondeu
+**Status deste bot** (2026-10-24): ativado; recentro automático ligado; dependências sem vulnerabilidades. Mini App em `https://app8936339348.tgcloud.ai/`; o `/setup` respondeu
 `webhook: "gerenciado pelo Telegram Serverless"`, comandos e botão de menu **Painel** registrados; `/link` concluído.
 
 **Problemas comuns:**
@@ -163,6 +163,16 @@ npx wrangler dev                 # use um túnel (ex.: cloudflared) para testar 
 Ferramentas: `wrangler` 4.152, `vitest` 5, `typescript` 5.9 (só dev; o Worker não tem dependências npm em
 runtime). O `package.json` força `undici ^7.30.1` via `overrides`, porque o `miniflare` do wrangler ainda puxa uma
 versão vulnerável. Confira com `npm audit` (esperado: 0 vulnerabilidades).
+
+## Histórico de mudanças
+
+| PR | O que entrou |
+|---|---|
+| #1 | Bot inicial: Worker + Telegram + cron + KV, cliente MCP e OAuth do Walt, grid e travas de risco |
+| #2 | Adaptador dedicado ao Walt Perps (prepare → execute), grid de posição única com TP/SL nativos, alertas no canal, licença MIT |
+| #3 | Mini App no Telegram Serverless (painel, pares, histórico, controles), API do Worker, `ALLOWED_MARKETS="*"` |
+| #4 | Deploy da Mini App corrigido (`fetch` + `migrate --safe`), `MINIAPP_URL`, ícones SVG |
+| #5 | Recentro automático do grid quando o preço sai da faixa; vitest 5, wrangler 4.152, `undici` forçado (0 vulnerabilidades) |
 
 ## Licença
 
