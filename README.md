@@ -160,6 +160,10 @@ cp .dev.vars.example .dev.vars   # preencha
 npx wrangler dev                 # use um túnel (ex.: cloudflared) para testar o webhook
 ```
 
+Ferramentas: `wrangler` 4.152, `vitest` 5, `typescript` 5.9 (só dev; o Worker não tem dependências npm em
+runtime). O `package.json` força `undici ^7.30.1` via `overrides`, porque o `miniflare` do wrangler ainda puxa uma
+versão vulnerável. Confira com `npm audit` (esperado: 0 vulnerabilidades).
+
 ## Licença
 
 [MIT](LICENSE) © 2026 Staline Satola. Uso por sua conta e risco: trading de perpétuos alavancados pode
