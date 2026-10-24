@@ -63,4 +63,47 @@ describe("tick paper", () => {
     expect((await tick(e))[0]).toMatch(/bloqueada pelo risco/);
     expect((await loadState(e)).grid?.position).toBeUndefined();
   });
+
+  it("recentra quando o preço passa do high sem posição e entra no mesmo tick", async () => {
+    const e = env();
+    const s = defaultState();
+    s.grid = { cfg };
+    s.running = true;
+    await saveState(e, s);
+    priceIs(120000);
+    const msgs = await tick(e);
+    expect(msgs[0]).toMatch(/recentrado: \$112800–\$122400/);
+    expect(msgs[1]).toMatch(/Long BTC/);
+    const st = await loadState(e);
+    expect(st.grid?.cfg.low).toBe(112800);
+    expect(st.lastRecenter?.price).toBe(120000);
+  });
+
+  it("não recentra com posição aberta", async () => {
+    const e = env();
+    const s = defaultState();
+    s.grid = { cfg };
+    s.running = true;
+    await saveState(e, s);
+    priceIs(104500);
+    await tick(e); // abre no degrau
+    priceIs(105500); // abaixo do TP (106000), dentro da faixa
+    await tick(e);
+    priceIs(130000); // TP acontece; o recentro só vem sem posição
+    const msgs = await tick(e);
+    expect(msgs[0]).toMatch(/Take-profit/);
+    expect(msgs[1]).toMatch(/recentrado/);
+  });
+
+  it("com AUTO_RECENTER=false só avisa, uma vez", async () => {
+    const e = { ...env(), AUTO_RECENTER: "false" };
+    const s = defaultState();
+    s.grid = { cfg };
+    s.running = true;
+    await saveState(e, s);
+    priceIs(120000);
+    expect((await tick(e))[0]).toMatch(/fora da faixa/);
+    expect(await tick(e)).toEqual([]);
+    expect((await loadState(e)).grid?.cfg.low).toBe(100000);
+  });
 });

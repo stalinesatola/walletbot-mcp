@@ -64,6 +64,9 @@ function renderState() {
 
   const g = s.grid;
   $('#g-desc').textContent = g ? `${g.market} ${usd(g.low)}–${usd(g.high)} · ${g.levels} degraus de ${usd(g.step)}` : 'não configurado';
+  const rc = s.lastRecenter;
+  $('#g-recenter-row').classList.toggle('hidden', !rc);
+  if (rc) $('#g-recenter').textContent = `${new Date(rc.at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} · preço ${usd(rc.price)}`;
   $('#g-trade').textContent = g ? `margem ${usd(g.marginUsd)} ${g.leverage}x ≈ ${usd(g.notional)} · SL ${usd(g.stopLoss)}` : '—';
 
   const p = s.position;

@@ -115,3 +115,14 @@ export function minMargin(contract: ContractInfo, price: number, leverage: numbe
   const minNotional = contract.minSizeBase * price * (1 + contract.priceSlippage);
   return Math.max(contract.minSizeQuote, minNotional * (1 / leverage + contract.takerFeePct));
 }
+
+/** Fora da faixa: acima do high, ou abaixo do degrau 0 (onde nenhum degrau compra). */
+export function outOfRange(cfg: GridConfig, price: number): boolean {
+  return price > cfg.high || price <= cfg.low - step(cfg);
+}
+
+/** Nova faixa centrada no preço: low = preço·(1−down%), high = preço·(1+up%). Degraus, margem e alavancagem iguais. */
+export function recenter(cfg: GridConfig, price: number, downPct: number, upPct: number): GridConfig {
+  const d = cfg.contract.priceDecimals;
+  return { ...cfg, low: roundPrice(price * (1 - downPct / 100), d), high: roundPrice(price * (1 + upPct / 100), d) };
+}

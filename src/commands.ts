@@ -105,6 +105,8 @@ async function status(env: Env): Promise<string> {
   );
   if (s.mode === "paper")
     lines.push(`Paper: patrimônio $${(s.lastPrice ? paperEquity(s, s.lastPrice) : s.paper.cash).toFixed(2)} (início $${s.paper.startCash})`);
+  if (s.lastRecenter)
+    lines.push(`Último recentro: ${s.lastRecenter.at} → $${s.lastRecenter.low}–$${s.lastRecenter.high} (preço $${s.lastRecenter.price})`);
   if (s.lastTick) lines.push(`Último tick: ${s.lastTick}`);
   if (s.lastError) lines.push(`Último erro: ${s.lastError}`);
   return lines.join("\n");
@@ -168,6 +170,7 @@ function risk(env: Env): string {
     `• Perda diária máx: ${l.maxDailyLossPct}% (pausa o bot)`,
     `• Stop-loss: ${l.stopLossPct}% abaixo do low do grid (no Walt, via autoClose)`,
     `• Mercados: ${l.allowedMarkets.join(", ")}`,
+    `• Recentro automático: ${l.autoRecenter ? `ligado (−${l.recenterDownPct}% / +${l.recenterUpPct}% do preço)` : "desligado"}`,
   ].join("\n");
 }
 

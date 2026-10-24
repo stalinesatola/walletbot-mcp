@@ -6,7 +6,7 @@ import { publicMid } from "./prices";
 import { pushEquity, pushPrice, recordTrade } from "./history";
 import { checkOpen, dailyLossExceeded } from "./risk";
 import { loadState, saveState, type BotState } from "./state";
-import { exitHit, planEntry, type GridConfig, type GridPosition } from "./strategy/grid";
+import { exitHit, outOfRange, planEntry, recenter, sizeError, type GridConfig, type GridPosition } from "./strategy/grid";
 import { Walt } from "./walt";
 
 export async function connectWalt(env: Env): Promise<Walt | null> {
@@ -129,8 +129,29 @@ async function runTick(env: Env, state: BotState, msgs: string[]): Promise<void>
     return;
   }
 
-  // 2) entrada no degrau
-  const plan = planEntry(cfg, price, limits.stopLossPct);
+  // 2) fora da faixa e sem posição: recentra (ou avisa uma vez)
+  if (outOfRange(grid.cfg, price)) {
+    if (!limits.autoRecenter) {
+      const block = `preço $${price} fora da faixa $${cfg.low}–$${cfg.high} — reconfigure com /grid`;
+      if (block !== state.lastBlock) msgs.push(`↔️ ${block}`);
+      state.lastBlock = block;
+      return;
+    }
+    const next = recenter(grid.cfg, price, limits.recenterDownPct, limits.recenterUpPct);
+    const err = sizeError(next, next.high);
+    if (err) {
+      const block = `não recentrei o grid: ${err}`;
+      if (block !== state.lastBlock) msgs.push(`🚫 ${block}`);
+      state.lastBlock = block;
+      return;
+    }
+    grid.cfg = next;
+    state.lastRecenter = { at: new Date().toISOString(), low: next.low, high: next.high, price };
+    msgs.push(`🔄 Grid ${next.market} recentrado: $${next.low}–$${next.high} (preço $${price})`);
+  }
+
+  // 3) entrada no degrau
+  const plan = planEntry(grid.cfg, price, limits.stopLossPct);
   if (!plan) return;
 
   const equity = live ? await walt!.balanceUsd() : paperEquity(state, price);

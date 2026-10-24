@@ -4,7 +4,9 @@ import {
   entryLevel,
   exitHit,
   notional,
+  outOfRange,
   planEntry,
+  recenter,
   sizeError,
   validateConfig,
   type GridConfig,
@@ -59,5 +61,19 @@ describe("grid de posição única", () => {
   it("rejeita tamanho abaixo do mínimo do contrato", () => {
     expect(sizeError(cfg, 105000)).toBeNull(); // ~0.00014 BTC
     expect(sizeError({ ...cfg, marginUsd: 1, leverage: 1 }, 105000)).toMatch(/mínimo/);
+  });
+
+  it("detecta preço fora da faixa (acima do high ou abaixo do degrau 0)", () => {
+    expect(outOfRange(cfg, 104500)).toBe(false);
+    expect(outOfRange(cfg, 110000)).toBe(false);
+    expect(outOfRange(cfg, 110001)).toBe(true);
+    expect(outOfRange(cfg, 99500)).toBe(false); // ainda no degrau 0
+    expect(outOfRange(cfg, 99000)).toBe(true);
+  });
+
+  it("recentra em −6%/+2% do preço mantendo degraus e margem", () => {
+    const r = recenter(cfg, 120000, 6, 2);
+    expect(r).toMatchObject({ low: 112800, high: 122400, levels: 10, marginUsd: 5, leverage: 3 });
+    expect(outOfRange(r, 120000)).toBe(false);
   });
 });

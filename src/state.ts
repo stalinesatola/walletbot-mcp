@@ -13,6 +13,7 @@ export interface BotState {
   lastTick?: string;
   lastError?: string;
   lastBlock?: string; // último bloqueio de risco (evita repetir a notificação)
+  lastRecenter?: { at: string; low: number; high: number; price: number };
   // histórico curto para o gráfico/curva — fica no próprio estado para gastar uma escrita de KV por tick
   prices?: { market: string; points: Array<[number, number]> };
   equity?: Array<[number, number]>;
