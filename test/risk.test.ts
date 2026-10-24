@@ -10,6 +10,9 @@ const limits: RiskLimits = {
   stopLossPct: 5,
   allowedMarkets: ["BTC", "ETH"],
   minVolume24hUsd: 1_000_000,
+  autoRecenter: true,
+  recenterDownPct: 6,
+  recenterUpPct: 2,
 };
 const ctx = { equityUsd: 100, openMarginUsd: 0, dayStartEquityUsd: 100 };
 

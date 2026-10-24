@@ -104,6 +104,7 @@ async function stateView(env: Env) {
     lastTick: s.lastTick ?? null,
     lastError: s.lastError ?? null,
     lastBlock: s.lastBlock ?? null,
+    lastRecenter: s.lastRecenter ?? null,
     stats: s.stats,
     grid,
     position: pos

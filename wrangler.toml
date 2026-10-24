@@ -20,6 +20,10 @@ MAX_ORDER_PCT = "25"           # margem máxima por ordem, % do patrimônio (25%
 MAX_TOTAL_EXPOSURE_PCT = "50"  # margem total máxima em posições do grid, % do patrimônio
 MAX_DAILY_LOSS_PCT = "5"       # perda diária que pausa o bot
 STOP_LOSS_PCT = "5"            # abaixo de (low - 5%) fecha tudo e para o grid
+# Sem posição aberta e preço fora da faixa: recentra o grid em -6%/+2% do preço e segue operando.
+AUTO_RECENTER = "true"
+RECENTER_DOWN_PCT = "6"
+RECENTER_UP_PCT = "2"
 # "*" = todos os contratos ativos do Walt com volume 24h >= MIN_VOLUME_24H_USD
 ALLOWED_MARKETS = "*"
 MIN_VOLUME_24H_USD = "1000000"

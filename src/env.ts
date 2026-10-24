@@ -15,6 +15,9 @@ export interface Env {
   MIN_VOLUME_24H_USD?: string;
   API_SECRET?: string;
   MINIAPP_URL?: string;
+  AUTO_RECENTER?: string;
+  RECENTER_DOWN_PCT?: string;
+  RECENTER_UP_PCT?: string;
 }
 
 export interface RiskLimits {
@@ -25,6 +28,9 @@ export interface RiskLimits {
   stopLossPct: number;
   allowedMarkets: string[]; // ["*"] = todos os contratos ativos
   minVolume24hUsd: number;
+  autoRecenter: boolean;
+  recenterDownPct: number;
+  recenterUpPct: number;
 }
 
 export function riskLimits(env: Env): RiskLimits {
@@ -38,6 +44,9 @@ export function riskLimits(env: Env): RiskLimits {
     maxTotalExposurePct: num(env.MAX_TOTAL_EXPOSURE_PCT, 50),
     maxDailyLossPct: num(env.MAX_DAILY_LOSS_PCT, 5),
     stopLossPct: num(env.STOP_LOSS_PCT, 5),
+    autoRecenter: (env.AUTO_RECENTER ?? "true").toLowerCase() !== "false",
+    recenterDownPct: num(env.RECENTER_DOWN_PCT, 6),
+    recenterUpPct: num(env.RECENTER_UP_PCT, 2),
     minVolume24hUsd: Number(env.MIN_VOLUME_24H_USD) >= 0 ? Number(env.MIN_VOLUME_24H_USD) : 1_000_000,
     allowedMarkets: (env.ALLOWED_MARKETS || "BTC,ETH,SOL")
       .split(",")

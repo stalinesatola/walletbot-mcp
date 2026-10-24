@@ -26,6 +26,11 @@ Sem o Serverless ligado, o Worker também funciona sozinho com webhook direto (`
   Quando o preço entra num degrau, o bot abre um long com **take-profit no degrau de cima** e
   **stop-loss em `low − STOP_LOSS_PCT%`**, ambos nativos do Walt (`autoClose`), então a saída acontece
   mesmo com o bot parado. Quando a posição fecha por TP, o bot espera o próximo degrau; por SL, para o grid.
+- **Recentro automático** (`AUTO_RECENTER`, padrão ligado): sem posição aberta e com o preço fora da faixa
+  (acima do `high` ou abaixo do degrau 0), o bot reposiciona a faixa em `−RECENTER_DOWN_PCT%` / `+RECENTER_UP_PCT%`
+  do preço (padrão −6% / +2%), mantém degraus, margem e alavancagem, avisa no canal ("Grid recentrado") e já entra
+  no degrau do preço no mesmo tick. Com posição aberta nunca recentra. Com `AUTO_RECENTER = "false"` só manda
+  um alerta "preço fora da faixa".
 - **Risco** (`src/risk.ts`, valores em `wrangler.toml`): alavancagem ≤ 3x (inteira e ≤ máx do contrato),
   margem ≤ `MAX_ORDER_PCT` do saldo por trade (hoje **25%**, para operar com ~$10), perda diária ≥ 5% pausa
   o bot, stop-loss 5% abaixo do `low`, whitelist BTC/ETH/SOL, tamanho mínimo do contrato validado no `/grid`.
@@ -154,6 +159,10 @@ npm test && npm run typecheck
 cp .dev.vars.example .dev.vars   # preencha
 npx wrangler dev                 # use um túnel (ex.: cloudflared) para testar o webhook
 ```
+
+Ferramentas: `wrangler` 4.152, `vitest` 5, `typescript` 5.9 (só dev; o Worker não tem dependências npm em
+runtime). O `package.json` força `undici ^7.30.1` via `overrides`, porque o `miniflare` do wrangler ainda puxa uma
+versão vulnerável. Confira com `npm audit` (esperado: 0 vulnerabilidades).
 
 ## Licença
 
